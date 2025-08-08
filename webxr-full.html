@@ -186,7 +186,6 @@
   <script type="module">
     import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
     import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js';
-    import * as Tone from 'https://cdn.jsdelivr.net/npm/tone@15.0.4/build/Tone.js';
     
     // Euclidean Rhythm Generator
     class EuclideanRhythm {
@@ -231,7 +230,7 @@
       }
     }
     
-    // Advanced Audio Engine
+    // Advanced Audio Engine using Web Audio API
     class AdvancedAudioEngine {
       constructor() {
         this.isPlaying = false;
@@ -242,236 +241,229 @@
         this.modes = ['AMBIENT', 'TECHNO', 'DUBSTEP', 'TRANCE', 'EXPERIMENTAL'];
         this.patterns = ['EUCLIDEAN', 'RANDOM', 'SPIRAL', 'CHAOS', 'HARMONIC'];
         
-        this.synths = {};
-        this.effects = {};
-        this.sequences = [];
+        this.audioContext = null;
+        this.oscillators = [];
+        this.gainNodes = [];
+        this.filters = [];
         this.analyzer = null;
-        this.meter = null;
+        this.sequenceInterval = null;
+        this.currentStep = 0;
+        this.pattern = [];
       }
       
       async init() {
-        // Initialize Tone.js
-        await Tone.start();
+        // Initialize Web Audio API
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         
-        // Create synthesizers
-        this.synths.bass = new Tone.MonoSynth({
-          oscillator: { type: 'sawtooth' },
-          envelope: { attack: 0.01, decay: 0.3, sustain: 0.4, release: 0.5 },
-          filterEnvelope: { attack: 0.01, decay: 0.1, sustain: 0.3, release: 0.5, baseFrequency: 100, octaves: 2 }
-        });
+        // Create analyzer
+        this.analyzer = this.audioContext.createAnalyser();
+        this.analyzer.fftSize = 256;
+        this.analyzer.connect(this.audioContext.destination);
         
-        this.synths.lead = new Tone.PolySynth(Tone.Synth, {
-          oscillator: { type: 'square' },
-          envelope: { attack: 0.02, decay: 0.1, sustain: 0.3, release: 0.4 }
-        });
+        // Create master gain
+        this.masterGain = this.audioContext.createGain();
+        this.masterGain.gain.value = 0.5;
+        this.masterGain.connect(this.analyzer);
         
-        this.synths.pad = new Tone.PolySynth(Tone.Synth, {
-          oscillator: { type: 'sine' },
-          envelope: { attack: 0.5, decay: 0.2, sustain: 0.8, release: 2 }
-        });
+        // Create convolver for reverb
+        this.convolver = this.audioContext.createConvolver();
+        this.convolver.connect(this.masterGain);
         
-        this.synths.drums = new Tone.Sampler({
-          urls: {
-            C2: 'https://tonejs.github.io/audio/drum-samples/kick.mp3',
-            D2: 'https://tonejs.github.io/audio/drum-samples/snare.mp3',
-            E2: 'https://tonejs.github.io/audio/drum-samples/hihat.mp3'
-          },
-          onload: () => console.log('Drums loaded')
-        });
+        // Create simple reverb impulse
+        const length = this.audioContext.sampleRate * 2;
+        const impulse = this.audioContext.createBuffer(2, length, this.audioContext.sampleRate);
+        for (let channel = 0; channel < 2; channel++) {
+          const channelData = impulse.getChannelData(channel);
+          for (let i = 0; i < length; i++) {
+            channelData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2);
+          }
+        }
+        this.convolver.buffer = impulse;
         
-        // Create effects chain
-        this.effects.reverb = new Tone.Reverb({ decay: 2.5, wet: 0.3 });
-        this.effects.delay = new Tone.FeedbackDelay('8n', 0.3);
-        this.effects.chorus = new Tone.Chorus(4, 2.5, 0.5);
-        this.effects.distortion = new Tone.Distortion(0.1);
-        this.effects.filter = new Tone.AutoFilter('4n').start();
-        this.effects.compressor = new Tone.Compressor(-30, 10);
+        // Create delay
+        this.delay = this.audioContext.createDelay(1.0);
+        this.delay.delayTime.value = 0.3;
+        this.delayGain = this.audioContext.createGain();
+        this.delayGain.gain.value = 0.3;
+        this.delay.connect(this.delayGain);
+        this.delayGain.connect(this.delay);
+        this.delay.connect(this.masterGain);
         
-        // Connect audio graph
-        const master = new Tone.Gain(0.7);
-        
-        this.synths.bass.connect(this.effects.distortion);
-        this.effects.distortion.connect(this.effects.compressor);
-        
-        this.synths.lead.connect(this.effects.delay);
-        this.effects.delay.connect(this.effects.reverb);
-        
-        this.synths.pad.connect(this.effects.chorus);
-        this.effects.chorus.connect(this.effects.reverb);
-        
-        this.synths.drums.connect(this.effects.compressor);
-        
-        this.effects.reverb.connect(master);
-        this.effects.compressor.connect(master);
-        master.toDestination();
-        
-        // Create analyzer for visualization
-        this.analyzer = new Tone.Analyser('waveform', 256);
-        master.connect(this.analyzer);
-        
-        // Create meter for beat detection
-        this.meter = new Tone.Meter();
-        master.connect(this.meter);
+        // Create filter
+        this.filter = this.audioContext.createBiquadFilter();
+        this.filter.type = 'lowpass';
+        this.filter.frequency.value = 2000;
+        this.filter.Q.value = 1;
+        this.filter.connect(this.masterGain);
         
         this.setupSequences();
       }
       
       setupSequences() {
-        // Clear existing sequences
-        this.sequences.forEach(seq => seq.dispose());
-        this.sequences = [];
-        
+        // Generate pattern based on current mode
         const mode = this.modes[this.currentMode];
-        const pattern = this.patterns[this.currentPattern];
         
-        // Generate patterns based on mode
         if (mode === 'AMBIENT') {
-          this.setupAmbientMode();
+          this.pattern = this.generateAmbientPattern();
         } else if (mode === 'TECHNO') {
-          this.setupTechnoMode();
+          this.pattern = this.generateTechnoPattern();
         } else if (mode === 'DUBSTEP') {
-          this.setupDubstepMode();
+          this.pattern = this.generateDubstepPattern();
         } else if (mode === 'TRANCE') {
-          this.setupTranceMode();
+          this.pattern = this.generateTrancePattern();
         } else {
-          this.setupExperimentalMode();
+          this.pattern = this.generateExperimentalPattern();
         }
       }
       
-      setupAmbientMode() {
-        // Ambient pad progression
-        const chords = [
-          ['C4', 'E4', 'G4', 'B4'],
-          ['A3', 'C4', 'E4', 'G4'],
-          ['F3', 'A3', 'C4', 'E4'],
-          ['G3', 'B3', 'D4', 'F4']
+      generateAmbientPattern() {
+        // Ambient chord progression
+        return [
+          { notes: [261.63, 329.63, 392.00], type: 'pad' },
+          { notes: [220.00, 277.18, 329.63], type: 'pad' },
+          { notes: [196.00, 246.94, 293.66], type: 'pad' },
+          { notes: [174.61, 220.00, 261.63], type: 'pad' }
         ];
-        
-        const padSeq = new Tone.Sequence((time, chord) => {
-          this.synths.pad.triggerAttackRelease(chord, '2n', time);
-        }, chords, '1n');
-        
-        // Sparse melodic elements
-        const melody = ['C5', 'E5', 'G5', 'B5', 'G5', 'E5', 'C5', null];
-        const leadSeq = new Tone.Sequence((time, note) => {
-          if (note) this.synths.lead.triggerAttackRelease(note, '8n', time);
-        }, melody, '8n');
-        
-        this.sequences.push(padSeq, leadSeq);
       }
       
-      setupTechnoMode() {
-        // 4/4 kick pattern
+      generateTechnoPattern() {
+        // Techno beat pattern using Euclidean rhythm
         const kickPattern = EuclideanRhythm.generate(16, 4);
-        const kickSeq = new Tone.Sequence((time, hit) => {
-          if (hit) this.synths.drums.triggerAttackRelease('C2', '8n', time);
-        }, kickPattern, '16n');
-        
-        // Hi-hat pattern
         const hihatPattern = EuclideanRhythm.generate(16, 10);
-        const hihatSeq = new Tone.Sequence((time, hit) => {
-          if (hit) this.synths.drums.triggerAttackRelease('E2', '32n', time);
-        }, hihatPattern, '16n');
+        const bassPattern = [130.81, 130.81, 196.00, 130.81, 116.54, 116.54, 174.61, 130.81];
         
-        // Bass line
-        const bassNotes = ['C2', 'C2', 'G2', 'C2', 'A#1', 'A#1', 'F2', 'C2'];
-        const bassSeq = new Tone.Sequence((time, note) => {
-          this.synths.bass.triggerAttackRelease(note, '16n', time);
-        }, bassNotes, '16n');
-        
-        // Techno lead
-        const leadNotes = ['C5', null, 'E5', null, 'G5', null, 'C6', null];
-        const leadSeq = new Tone.Pattern((time, note) => {
-          if (note) this.synths.lead.triggerAttackRelease(note, '16n', time);
-        }, leadNotes, 'upDown');
-        
-        this.sequences.push(kickSeq, hihatSeq, bassSeq, leadSeq);
+        return kickPattern.map((kick, i) => ({
+          kick: kick,
+          hihat: hihatPattern[i],
+          bass: bassPattern[i % bassPattern.length],
+          type: 'techno'
+        }));
       }
       
-      setupDubstepMode() {
-        Tone.Transport.bpm.value = 140;
-        
-        // Heavy sub bass
-        const dubBass = ['C1', null, null, 'C1', null, 'G1', null, 'C1'];
-        const bassSeq = new Tone.Sequence((time, note) => {
-          if (note) {
-            this.synths.bass.triggerAttackRelease(note, '4n', time);
-          }
-        }, dubBass, '8n');
-        
-        // Snare on 3
-        const snareSeq = new Tone.Loop((time) => {
-          this.synths.drums.triggerAttackRelease('D2', '8n', time);
-        }, '2n').start('2n');
-        
-        this.sequences.push(bassSeq);
-        this.sequences.push({ start: () => snareSeq, stop: () => snareSeq.stop(), dispose: () => {} });
+      generateDubstepPattern() {
+        // Dubstep wobble bass
+        return [
+          { notes: [65.41], type: 'wobble', lfo: 4 },
+          { notes: [], type: 'silence' },
+          { notes: [], type: 'silence' },
+          { notes: [65.41], type: 'wobble', lfo: 8 },
+          { notes: [], type: 'silence' },
+          { notes: [98.00], type: 'wobble', lfo: 6 }
+        ];
       }
       
-      setupTranceMode() {
-        Tone.Transport.bpm.value = 138;
-        
-        // Trance bass (rolling)
-        const bassPattern = ['C3', 'C3', 'C3', 'C3'];
-        const bassSeq = new Tone.Sequence((time, note) => {
-          this.synths.bass.triggerAttackRelease(note, '32n', time);
-        }, bassPattern, '16n');
-        
-        // Trance lead arpeggio
-        const arp = ['C5', 'E5', 'G5', 'C6', 'G5', 'E5'];
-        const arpSeq = new Tone.Pattern((time, note) => {
-          this.synths.lead.triggerAttackRelease(note, '16n', time);
-        }, arp, 'up');
-        
-        // Pads
-        const pads = [['C4', 'E4', 'G4'], ['F4', 'A4', 'C5']];
-        const padSeq = new Tone.Sequence((time, chord) => {
-          this.synths.pad.triggerAttackRelease(chord, '1n', time);
-        }, pads, '2n');
-        
-        this.sequences.push(bassSeq, arpSeq, padSeq);
+      generateTrancePattern() {
+        // Trance arpeggio
+        const notes = [261.63, 329.63, 392.00, 523.25, 392.00, 329.63];
+        return notes.map(note => ({ notes: [note], type: 'arp' }));
       }
       
-      setupExperimentalMode() {
-        // Generative patterns using randomness and algorithms
-        const randomSeq = new Tone.Loop((time) => {
-          if (Math.random() > 0.7) {
-            const note = ['C', 'D', 'E', 'F', 'G', 'A', 'B'][Math.floor(Math.random() * 7)];
-            const octave = Math.floor(Math.random() * 3) + 3;
-            this.synths.lead.triggerAttackRelease(`${note}${octave}`, '16n', time);
-          }
-          
-          if (Math.random() > 0.8) {
-            this.synths.drums.triggerAttackRelease('C2', '8n', time);
-          }
-          
-          if (Math.random() > 0.9) {
-            const bassNote = ['C2', 'G2', 'F2', 'A#2'][Math.floor(Math.random() * 4)];
-            this.synths.bass.triggerAttackRelease(bassNote, '8n', time);
-          }
-        }, '16n');
+      generateExperimentalPattern() {
+        // Random generative pattern
+        return Array(16).fill(0).map(() => ({
+          notes: Math.random() > 0.7 ? [
+            100 + Math.random() * 400,
+            150 + Math.random() * 300
+          ] : [],
+          type: 'experimental',
+          random: Math.random()
+        }));
+      }
+      
+      playNote(frequency, type = 'sine', duration = 0.2) {
+        const now = this.audioContext.currentTime;
         
-        this.sequences.push({ 
-          start: () => randomSeq.start(0), 
-          stop: () => randomSeq.stop(), 
-          dispose: () => randomSeq.dispose() 
-        });
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+        
+        osc.type = type;
+        osc.frequency.value = frequency;
+        
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.3, now + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + duration);
+        
+        osc.connect(gain);
+        
+        // Route through effects based on type
+        if (type === 'sawtooth') {
+          gain.connect(this.filter);
+        } else if (type === 'square') {
+          gain.connect(this.delay);
+        } else {
+          gain.connect(this.convolver);
+        }
+        
+        osc.start(now);
+        osc.stop(now + duration);
+      }
+      
+      playStep() {
+        if (!this.isPlaying || !this.pattern || this.pattern.length === 0) return;
+        
+        const step = this.pattern[this.currentStep % this.pattern.length];
+        
+        if (step.notes && step.notes.length > 0) {
+          step.notes.forEach(note => {
+            const type = step.type === 'pad' ? 'sine' : 
+                        step.type === 'techno' ? 'square' :
+                        step.type === 'wobble' ? 'sawtooth' : 'sine';
+            
+            const duration = step.type === 'pad' ? 1.0 : 
+                           step.type === 'wobble' ? 0.5 : 0.2;
+            
+            this.playNote(note, type, duration);
+          });
+        }
+        
+        // Handle techno mode drums
+        if (step.type === 'techno') {
+          if (step.kick) this.playNote(60, 'sine', 0.1);
+          if (step.hihat) this.playNote(8000, 'square', 0.05);
+          if (step.bass) this.playNote(step.bass, 'sawtooth', 0.15);
+        }
+        
+        // Handle wobble bass LFO
+        if (step.type === 'wobble' && step.lfo) {
+          const lfo = this.audioContext.createOscillator();
+          lfo.frequency.value = step.lfo;
+          const lfoGain = this.audioContext.createGain();
+          lfoGain.gain.value = 500;
+          lfo.connect(lfoGain);
+          lfoGain.connect(this.filter.frequency);
+          lfo.start();
+          lfo.stop(this.audioContext.currentTime + 0.5);
+        }
+        
+        this.currentStep++;
       }
       
       async start() {
-        if (!this.synths.bass) {
+        if (!this.audioContext) {
           await this.init();
         }
         
-        this.sequences.forEach(seq => seq.start(0));
-        Tone.Transport.start();
+        if (this.audioContext.state === 'suspended') {
+          await this.audioContext.resume();
+        }
+        
         this.isPlaying = true;
+        this.currentStep = 0;
+        
+        // Calculate interval based on BPM
+        const stepTime = 60000 / (this.bpm * 4); // 16th notes
+        
+        this.sequenceInterval = setInterval(() => {
+          this.playStep();
+        }, stepTime);
       }
       
       stop() {
-        this.sequences.forEach(seq => seq.stop());
-        Tone.Transport.stop();
         this.isPlaying = false;
+        if (this.sequenceInterval) {
+          clearInterval(this.sequenceInterval);
+          this.sequenceInterval = null;
+        }
       }
       
       changeMode() {
@@ -494,16 +486,36 @@
       
       changeTempo(delta) {
         this.bpm = Math.max(60, Math.min(200, this.bpm + delta));
-        Tone.Transport.bpm.value = this.bpm;
+        
+        // Restart sequencer with new tempo if playing
+        if (this.isPlaying) {
+          this.stop();
+          this.start();
+        }
+        
         return this.bpm;
       }
       
       getWaveform() {
-        return this.analyzer ? this.analyzer.getValue() : new Float32Array(256);
+        if (!this.analyzer) return new Float32Array(256);
+        
+        const dataArray = new Float32Array(this.analyzer.frequencyBinCount);
+        this.analyzer.getFloatTimeDomainData(dataArray);
+        return dataArray;
       }
       
       getLevel() {
-        return this.meter ? this.meter.getValue() : -60;
+        if (!this.analyzer) return 0;
+        
+        const dataArray = new Uint8Array(this.analyzer.frequencyBinCount);
+        this.analyzer.getByteFrequencyData(dataArray);
+        
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        
+        return (sum / dataArray.length) / 255;
       }
     }
     
