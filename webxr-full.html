@@ -577,7 +577,14 @@
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 1.0;
+        
+        // Enable XR
         this.renderer.xr.enabled = true;
+        
+        // Set animation loop for XR
+        this.renderer.setAnimationLoop((time, frame) => {
+          this.render(time, frame);
+        });
       }
       
       setupScene() {
@@ -816,8 +823,12 @@
       setupXR() {
         // Check for WebXR support
         if ('xr' in navigator) {
+          console.log('WebXR is available');
+          
           // Check VR support
           navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+            console.log('VR supported:', supported);
+            
             if (supported) {
               // Create custom VR button
               const vrButton = document.getElementById('vr-button');
@@ -825,37 +836,73 @@
               vrButton.addEventListener('click', () => this.startXRSession('immersive-vr'));
               document.getElementById('xr-status').textContent = 'VR READY';
             } else {
-              document.getElementById('xr-status').textContent = 'VR NOT SUPPORTED';
+              // Check for inline XR support as fallback
+              navigator.xr.isSessionSupported('inline').then((inlineSupported) => {
+                if (inlineSupported) {
+                  console.log('Inline XR supported');
+                  document.getElementById('xr-status').textContent = 'INLINE XR';
+                } else {
+                  document.getElementById('xr-status').textContent = 'VR NOT SUPPORTED';
+                }
+              });
             }
+          }).catch(error => {
+            console.error('Error checking VR support:', error);
+            document.getElementById('xr-status').textContent = 'VR CHECK FAILED';
           });
           
           // Check AR support
           navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+            console.log('AR supported:', supported);
             if (supported) {
               document.getElementById('xr-status').textContent = 'AR READY';
-              // Could add AR button here if needed
+              
+              // Add AR button
+              const arButton = document.createElement('button');
+              arButton.id = 'ar-button';
+              arButton.textContent = 'ENTER AR';
+              arButton.className = 'control-btn';
+              arButton.style.position = 'absolute';
+              arButton.style.bottom = '30px';
+              arButton.style.right = '180px';
+              arButton.onclick = () => this.startXRSession('immersive-ar');
+              document.getElementById('ui-overlay').appendChild(arButton);
             }
           });
         } else {
+          console.log('WebXR not available');
           document.getElementById('xr-status').textContent = 'NO XR';
+          
+          // Show message
+          const vrButton = document.getElementById('vr-button');
+          vrButton.classList.remove('hidden');
+          vrButton.textContent = 'XR NOT AVAILABLE';
+          vrButton.disabled = true;
+          vrButton.style.opacity = '0.5';
         }
       }
       
       async startXRSession(mode) {
         try {
-          // Request XR session
-          const session = await navigator.xr.requestSession(mode, {
-            optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
-          });
+          console.log('Starting XR session:', mode);
           
+          // Request XR session with required features
+          const sessionInit = {
+            requiredFeatures: ['local'],
+            optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
+          };
+          
+          const session = await navigator.xr.requestSession(mode, sessionInit);
           this.xrSession = session;
           
-          // Setup XR renderer
-          await this.renderer.xr.setSession(session);
-          this.renderer.xr.enabled = true;
+          console.log('XR session started:', session);
+          
+          // Set the session
+          this.renderer.xr.setSession(session);
           
           // Get reference space
-          this.xrReferenceSpace = await session.requestReferenceSpace('local-floor');
+          const referenceSpace = await session.requestReferenceSpace('local');
+          this.xrReferenceSpace = referenceSpace;
           
           // Update button
           const vrButton = document.getElementById('vr-button');
@@ -866,19 +913,42 @@
           document.getElementById('controls').style.display = 'none';
           document.getElementById('hud').style.display = 'none';
           
+          // Position camera for VR
+          this.camera.position.set(0, 1.6, 0);
+          
           // Handle session end
           session.addEventListener('end', () => {
+            console.log('XR session ended');
             this.xrSession = null;
+            this.renderer.xr.setSession(null);
+            
             vrButton.textContent = 'ENTER VR';
             vrButton.onclick = () => this.startXRSession('immersive-vr');
+            
             document.getElementById('controls').style.display = 'flex';
             document.getElementById('hud').style.display = 'block';
-            this.renderer.xr.enabled = false;
+            
+            // Reset camera position
+            this.camera.position.set(0, 1.6, 3);
           });
+          
+          console.log('XR session fully initialized');
           
         } catch (error) {
           console.error('Failed to start XR session:', error);
-          document.getElementById('xr-status').textContent = 'XR ERROR';
+          document.getElementById('xr-status').textContent = 'XR ERROR: ' + error.message;
+          
+          // Try inline session as fallback
+          if (mode === 'immersive-vr') {
+            console.log('Trying inline session as fallback...');
+            try {
+              const inlineSession = await navigator.xr.requestSession('inline');
+              console.log('Inline session started:', inlineSession);
+              document.getElementById('xr-status').textContent = 'INLINE MODE';
+            } catch (inlineError) {
+              console.error('Inline session also failed:', inlineError);
+            }
+          }
         }
       }
       
@@ -981,61 +1051,67 @@
         }
       }
       
-      animate() {
-        this.renderer.setAnimationLoop(() => {
-          const deltaTime = this.clock.getDelta();
-          const elapsedTime = this.clock.getElapsedTime();
+      render(time, frame) {
+        const deltaTime = this.clock.getDelta();
+        const elapsedTime = this.clock.getElapsedTime();
+        
+        // Update FPS only if HUD is visible
+        const fpsElement = document.getElementById('fps');
+        if (fpsElement) {
+          fpsElement.textContent = Math.round(1 / deltaTime);
+        }
+        
+        // Get audio data
+        const waveform = this.audio.getWaveform();
+        const level = this.audio.getLevel();
+        
+        // Animate main orb
+        if (this.objects.orb) {
+          this.objects.orb.rotation.x += deltaTime * 0.5;
+          this.objects.orb.rotation.y += deltaTime * 0.3;
           
-          // Update FPS
-          document.getElementById('fps').textContent = Math.round(1 / deltaTime);
+          const scale = 1 + level * 0.5;
+          this.objects.orb.scale.set(scale, scale, scale);
           
-          // Get audio data
-          const waveform = this.audio.getWaveform();
-          const level = Math.max(0, (this.audio.getLevel() + 60) / 60);
+          // Color based on audio
+          const hue = (elapsedTime * 0.1 + level) % 1;
+          this.objects.orb.material.color.setHSL(hue, 1, 0.5);
+          this.objects.orb.material.emissive.setHSL(hue, 1, 0.5);
+        }
+        
+        // Animate particles
+        if (this.objects.particles) {
+          this.objects.particles.rotation.y += deltaTime * 0.1;
+          this.objects.particles.material.uniforms.time.value = elapsedTime;
+          this.objects.particles.material.uniforms.audioLevel.value = level;
+        }
+        
+        // Animate frequency bars
+        this.objects.frequencyBars.forEach((bar, i) => {
+          const freqIndex = Math.floor((i / this.objects.frequencyBars.length) * waveform.length);
+          const freqValue = Math.abs(waveform[freqIndex]) || 0;
           
-          // Animate main orb
-          if (this.objects.orb) {
-            this.objects.orb.rotation.x += deltaTime * 0.5;
-            this.objects.orb.rotation.y += deltaTime * 0.3;
-            
-            const scale = 1 + level * 0.5;
-            this.objects.orb.scale.set(scale, scale, scale);
-            
-            // Color based on audio
-            const hue = (elapsedTime * 0.1 + level) % 1;
-            this.objects.orb.material.color.setHSL(hue, 1, 0.5);
-            this.objects.orb.material.emissive.setHSL(hue, 1, 0.5);
-          }
+          bar.scale.y = 0.1 + freqValue * 5;
+          bar.position.y = bar.scale.y / 2;
           
-          // Animate particles
-          if (this.objects.particles) {
-            this.objects.particles.rotation.y += deltaTime * 0.1;
-            this.objects.particles.material.uniforms.time.value = elapsedTime;
-            this.objects.particles.material.uniforms.audioLevel.value = level;
-          }
-          
-          // Animate frequency bars
-          this.objects.frequencyBars.forEach((bar, i) => {
-            const freqIndex = Math.floor((i / this.objects.frequencyBars.length) * waveform.length);
-            const freqValue = Math.abs(waveform[freqIndex]) || 0;
-            
-            bar.scale.y = 0.1 + freqValue * 5;
-            bar.position.y = bar.scale.y / 2;
-            
-            // Color based on frequency
-            const hue = (i / this.objects.frequencyBars.length + elapsedTime * 0.1) % 1;
-            bar.material.color.setHSL(hue, 1, 0.5 + freqValue * 0.5);
-            bar.material.emissiveIntensity = freqValue;
-          });
-          
-          // Animate skybox
-          if (this.objects.skybox) {
-            this.objects.skybox.rotation.y += deltaTime * 0.01;
-          }
-          
-          // Render scene
-          this.renderer.render(this.scene, this.camera);
+          // Color based on frequency
+          const hue = (i / this.objects.frequencyBars.length + elapsedTime * 0.1) % 1;
+          bar.material.color.setHSL(hue, 1, 0.5 + freqValue * 0.5);
+          bar.material.emissiveIntensity = freqValue;
         });
+        
+        // Animate skybox
+        if (this.objects.skybox) {
+          this.objects.skybox.rotation.y += deltaTime * 0.01;
+        }
+        
+        // Render scene (renderer will use XR camera if in XR session)
+        this.renderer.render(this.scene, this.camera);
+      }
+      
+      animate() {
+        // Animation loop is handled by renderer.setAnimationLoop in setupRenderer
+        // This ensures it works for both regular and XR rendering
       }
     }
     
