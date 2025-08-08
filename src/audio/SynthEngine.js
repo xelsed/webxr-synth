@@ -11,19 +11,17 @@ export class SynthEngine {
     this.effects = {};
     this.analyzer = null;
     this.isInitialized = false;
-    
-    // Don't auto-initialize to prevent audio overload
   }
   
   async initialize() {
     if (this.isInitialized) return;
     
     try {
-      // Start with minimal setup
-      this.setupMinimalSynths();
-      this.setupMinimalEffects();
+      this.setupSynths();
+      this.setupDrums();
+      this.setupEffects();
       this.setupAnalyzer();
-      this.generateSimplePattern();
+      this.generateNewPattern();
       this.isInitialized = true;
     } catch (error) {
       console.error('Audio initialization failed:', error);
@@ -31,9 +29,9 @@ export class SynthEngine {
     }
   }
   
-  setupMinimalSynths() {
-    // Only create essential synths
-    this.leadSynth = new Tone.Synth({
+  setupSynths() {
+    // Lead synth with character
+    this.leadSynth = new Tone.PolySynth(Tone.Synth, {
       oscillator: { type: 'sawtooth' },
       envelope: {
         attack: 0.01,
@@ -43,9 +41,43 @@ export class SynthEngine {
       }
     });
     
+    // Bass synth for low end
+    this.bassSynth = new Tone.MonoSynth({
+      oscillator: { type: 'square' },
+      envelope: {
+        attack: 0.01,
+        decay: 0.1,
+        sustain: 0.8,
+        release: 0.2
+      },
+      filterEnvelope: {
+        attack: 0.01,
+        decay: 0.1,
+        sustain: 0.5,
+        release: 0.2,
+        baseFrequency: 200,
+        octaves: 2
+      }
+    });
+    
+    // Pad for atmosphere
+    this.padSynth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'sine' },
+      envelope: {
+        attack: 0.5,
+        decay: 0.3,
+        sustain: 0.7,
+        release: 2
+      }
+    });
+  }
+  
+  setupDrums() {
+    // Kick drum
     this.kick = new Tone.MembraneSynth({
       pitchDecay: 0.05,
       octaves: 4,
+      oscillator: { type: 'sine' },
       envelope: {
         attack: 0.001,
         decay: 0.4,
@@ -53,48 +85,141 @@ export class SynthEngine {
         release: 0.4
       }
     });
+    
+    // Snare
+    this.snare = new Tone.NoiseSynth({
+      noise: { type: 'white' },
+      envelope: {
+        attack: 0.001,
+        decay: 0.1,
+        sustain: 0
+      }
+    });
+    
+    // Hi-hat (simplified)
+    this.hihat = new Tone.MetalSynth({
+      frequency: 250,
+      envelope: {
+        attack: 0.001,
+        decay: 0.05,
+        release: 0.01
+      },
+      harmonicity: 5.1,
+      modulationIndex: 16, // Reduced from 32
+      resonance: 2000,     // Reduced from 4000
+      octaves: 1
+    });
   }
   
-  setupMinimalEffects() {
-    // Minimal effects to prevent overload
-    this.effects.limiter = new Tone.Limiter(-6);
+  setupEffects() {
+    // Light reverb
+    this.effects.reverb = new Tone.Reverb({
+      decay: 1.5,  // Reduced from 2.5
+      wet: 0.2     // Reduced from 0.3
+    });
     
-    // Direct connections with no heavy effects
-    this.leadSynth.connect(this.effects.limiter);
-    this.kick.connect(this.effects.limiter);
+    // Simple delay
+    this.effects.delay = new Tone.FeedbackDelay({
+      delayTime: '8n',
+      feedback: 0.2,  // Reduced from 0.3
+      wet: 0.1        // Reduced from 0.2
+    });
+    
+    // Master limiter
+    this.effects.limiter = new Tone.Limiter(-3);
+    
+    // Create buses
+    const drumBus = new Tone.Gain(0.7);
+    const synthBus = new Tone.Gain(0.5);
+    
+    // Connect drums (dry)
+    this.kick.connect(drumBus);
+    this.snare.connect(drumBus);
+    this.hihat.connect(drumBus);
+    
+    // Connect synths with light effects
+    this.leadSynth.connect(this.effects.delay);
+    this.effects.delay.connect(synthBus);
+    
+    this.bassSynth.connect(synthBus);
+    
+    this.padSynth.connect(this.effects.reverb);
+    this.effects.reverb.connect(synthBus);
+    
+    // Master output
+    drumBus.connect(this.effects.limiter);
+    synthBus.connect(this.effects.limiter);
     this.effects.limiter.toDestination();
   }
   
   setupAnalyzer() {
-    this.analyzer = new Tone.Analyser('fft', 128); // Reduced from 256
+    this.analyzer = new Tone.Analyser('fft', 256);
     this.effects.limiter.connect(this.analyzer);
+    
+    this.waveform = new Tone.Analyser('waveform', 1024);
+    this.effects.limiter.connect(this.waveform);
   }
   
-  generateSimplePattern() {
-    // Much simpler pattern
-    this.currentPattern = {
-      kick: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
-    };
+  generateNewPattern() {
+    // Generate rhythmic patterns
+    this.currentPattern = this.beatGenerator.generateDrumPattern(16);
+    
+    const melody = this.beatGenerator.generateMelody('pentatonic', 8);
+    const bassline = this.beatGenerator.generateBassline('C2', this.currentPattern.kick);
+    const chords = this.beatGenerator.generateChordProgression();
     
     this.clearSequencers();
     
-    // Only one drum sequence
+    // Drum sequence
     const drumSeq = new Tone.Sequence((time, step) => {
       if (this.currentPattern.kick[step] === 1) {
         this.kick.triggerAttackRelease('C1', '8n', time);
       }
+      if (this.currentPattern.snare[step] === 1) {
+        this.snare.triggerAttackRelease('8n', time);
+      }
+      if (this.currentPattern.hihat[step] === 1) {
+        this.hihat.triggerAttackRelease('C4', '32n', time, 0.3);
+      }
     }, [...Array(16).keys()], '16n');
     
-    // Simple melody
-    const melody = ['C4', null, 'E4', null, 'G4', null, 'E4', null];
+    // Melody sequence
     const melodySeq = new Tone.Sequence((time, step) => {
       const note = melody[step % melody.length];
-      if (note) {
-        this.leadSynth.triggerAttackRelease(note, '16n', time, 0.5);
+      if (note && Math.random() > 0.1) { // Skip some notes for variation
+        this.leadSynth.triggerAttackRelease(note.note, note.duration, time, note.velocity * 0.7);
       }
-    }, [...Array(8).keys()], '16n');
+    }, [...Array(16).keys()], '16n');
     
-    this.sequencers = [drumSeq, melodySeq];
+    // Bass sequence
+    const bassSeq = new Tone.Sequence((time, step) => {
+      const note = bassline[step % bassline.length];
+      if (note) {
+        this.bassSynth.triggerAttackRelease(note.note, note.duration, time, note.velocity * 0.8);
+      }
+    }, [...Array(16).keys()], '16n');
+    
+    // Chord sequence (sparse)
+    const chordSeq = new Tone.Sequence((time, step) => {
+      const chord = chords[step % chords.length];
+      const notes = this.getChordNotes(chord);
+      this.padSynth.triggerAttackRelease(notes, '2n', time, 0.3);
+    }, [0, 8], '16n'); // Only on beats 1 and 3
+    
+    this.sequencers = [drumSeq, melodySeq, bassSeq, chordSeq];
+  }
+  
+  getChordNotes(chordName) {
+    const chordMap = {
+      'C4': ['C3', 'E3', 'G3'],
+      'G4': ['G3', 'B3', 'D4'],
+      'Am4': ['A3', 'C4', 'E4'],
+      'F4': ['F3', 'A3', 'C4'],
+      'Em4': ['E3', 'G3', 'B3'],
+      'Dm4': ['D3', 'F3', 'A3']
+    };
+    
+    return chordMap[chordName] || ['C3', 'E3', 'G3'];
   }
   
   clearSequencers() {
@@ -145,17 +270,30 @@ export class SynthEngine {
     }
   }
   
+  mutatePattern() {
+    if (this.currentPattern) {
+      this.currentPattern.kick = this.beatGenerator.mutatePattern(this.currentPattern.kick, 0.1);
+      this.currentPattern.snare = this.beatGenerator.mutatePattern(this.currentPattern.snare, 0.1);
+    }
+    this.generateNewPattern();
+  }
+  
   getFFTData() {
-    if (!this.analyzer) return new Float32Array(128);
+    if (!this.analyzer) return new Float32Array(256);
     try {
       return this.analyzer.getValue();
     } catch (e) {
-      return new Float32Array(128);
+      return new Float32Array(256);
     }
   }
   
   getWaveformData() {
-    return new Float32Array(1024); // Return empty for now
+    if (!this.waveform) return new Float32Array(1024);
+    try {
+      return this.waveform.getValue();
+    } catch (e) {
+      return new Float32Array(1024);
+    }
   }
   
   dispose() {
@@ -163,25 +301,19 @@ export class SynthEngine {
     this.clearSequencers();
     
     try {
-      if (this.leadSynth) this.leadSynth.dispose();
-      if (this.kick) this.kick.dispose();
+      [this.leadSynth, this.bassSynth, this.padSynth,
+       this.kick, this.snare, this.hihat].forEach(synth => {
+        if (synth) synth.dispose();
+      });
       
       Object.values(this.effects).forEach(effect => {
         if (effect && effect.dispose) effect.dispose();
       });
       
       if (this.analyzer) this.analyzer.dispose();
+      if (this.waveform) this.waveform.dispose();
     } catch (e) {
       console.warn('Disposal error:', e);
     }
-  }
-  
-  // Stub methods for compatibility
-  mutatePattern() {
-    this.generateSimplePattern();
-  }
-  
-  generateNewPattern() {
-    this.generateSimplePattern();
   }
 }
