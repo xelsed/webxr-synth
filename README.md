@@ -1,5 +1,7 @@
 # WebXR Audio Synthesizer
 
+**[Live Demo](https://xelsed.github.io/webxr-synth/)**
+
 An interactive 3D WebXR synthesizer with algorithmic beat generation and audio-reactive visualizations, optimized for Rokid Max 2 AR glasses.
 
 ## Features
