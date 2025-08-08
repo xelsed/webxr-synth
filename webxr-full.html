@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebXR Immersive Audio Synthesizer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: 'Courier New', monospace;
+      background: #000;
+      color: #0ff;
+      overflow: hidden;
+      position: relative;
+    }
+    
+    #canvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    
+    #ui-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 100;
+    }
+    
+    #hud {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      padding: 15px;
+      background: rgba(0, 0, 0, 0.8);
+      border: 2px solid #0ff;
+      border-radius: 10px;
+      backdrop-filter: blur(10px);
+      pointer-events: auto;
+      min-width: 250px;
+    }
+    
+    #hud h3 {
+      margin: 0 0 10px 0;
+      color: #f0f;
+      text-shadow: 0 0 10px #f0f;
+    }
+    
+    .hud-item {
+      margin: 5px 0;
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+    }
+    
+    .hud-value {
+      color: #ff0;
+      font-weight: bold;
+    }
+    
+    #controls {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 15px;
+      pointer-events: auto;
+    }
+    
+    .control-btn {
+      padding: 15px 30px;
+      background: linear-gradient(135deg, rgba(0, 255, 255, 0.2), rgba(255, 0, 255, 0.2));
+      border: 2px solid #0ff;
+      color: #fff;
+      font-size: 16px;
+      font-weight: bold;
+      border-radius: 30px;
+      cursor: pointer;
+      transition: all 0.3s;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 4px 20px rgba(0, 255, 255, 0.3);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    
+    .control-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 30px rgba(0, 255, 255, 0.5);
+      background: linear-gradient(135deg, rgba(0, 255, 255, 0.3), rgba(255, 0, 255, 0.3));
+    }
+    
+    .control-btn:active {
+      transform: translateY(0);
+    }
+    
+    .control-btn.active {
+      background: linear-gradient(135deg, rgba(0, 255, 255, 0.5), rgba(255, 0, 255, 0.5));
+      box-shadow: 0 0 30px rgba(255, 0, 255, 0.8);
+    }
+    
+    #vr-button {
+      position: absolute;
+      bottom: 30px;
+      right: 30px;
+      padding: 15px 30px;
+      background: linear-gradient(135deg, #f0f, #0ff);
+      border: none;
+      color: #000;
+      font-size: 18px;
+      font-weight: bold;
+      border-radius: 30px;
+      cursor: pointer;
+      pointer-events: auto;
+      animation: pulse-vr 2s infinite;
+    }
+    
+    @keyframes pulse-vr {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+    
+    #loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 24px;
+      text-align: center;
+      animation: glow 1.5s ease-in-out infinite;
+    }
+    
+    @keyframes glow {
+      0%, 100% { text-shadow: 0 0 10px #0ff; }
+      50% { text-shadow: 0 0 20px #0ff, 0 0 30px #f0f; }
+    }
+    
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  
+  <div id="ui-overlay">
+    <div id="hud">
+      <h3>WEBXR SYNTH</h3>
+      <div class="hud-item">
+        <span>FPS:</span>
+        <span class="hud-value" id="fps">60</span>
+      </div>
+      <div class="hud-item">
+        <span>BPM:</span>
+        <span class="hud-value" id="bpm">120</span>
+      </div>
+      <div class="hud-item">
+        <span>MODE:</span>
+        <span class="hud-value" id="mode">AMBIENT</span>
+      </div>
+      <div class="hud-item">
+        <span>PATTERN:</span>
+        <span class="hud-value" id="pattern">EUCLIDEAN</span>
+      </div>
+      <div class="hud-item">
+        <span>XR STATUS:</span>
+        <span class="hud-value" id="xr-status">READY</span>
+      </div>
+    </div>
+    
+    <div id="controls">
+      <button class="control-btn" id="play-btn">PLAY</button>
+      <button class="control-btn" id="mode-btn">MODE</button>
+      <button class="control-btn" id="pattern-btn">PATTERN</button>
+      <button class="control-btn" id="tempo-btn">TEMPO</button>
+      <button class="control-btn" id="visual-btn">VISUALS</button>
+    </div>
+    
+    <button id="vr-button" class="hidden">ENTER VR</button>
+  </div>
+  
+  <div id="loading">Initializing WebXR...</div>
+
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+    import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js';
+    import * as Tone from 'https://cdn.jsdelivr.net/npm/tone@15.0.4/build/Tone.js';
+    
+    // Euclidean Rhythm Generator
+    class EuclideanRhythm {
+      static generate(steps, pulses) {
+        if (pulses > steps) pulses = steps;
+        if (pulses === 0) return new Array(steps).fill(0);
+        
+        let pattern = [];
+        let counts = [];
+        let remainders = [];
+        
+        let divisor = steps - pulses;
+        remainders.push(pulses);
+        
+        let level = 0;
+        while (remainders[level] > 1) {
+          counts.push(Math.floor(divisor / remainders[level]));
+          remainders.push(divisor % remainders[level]);
+          divisor = remainders[level];
+          level++;
+        }
+        
+        counts.push(divisor);
+        
+        const build = (lev) => {
+          if (lev === -1) {
+            pattern.push(0);
+          } else if (lev === -2) {
+            pattern.push(1);
+          } else {
+            for (let i = 0; i < counts[lev]; i++) {
+              build(lev - 1);
+            }
+            if (remainders[lev] !== 0) {
+              build(lev - 2);
+            }
+          }
+        };
+        
+        build(level);
+        return pattern;
+      }
+    }
+    
+    // Advanced Audio Engine
+    class AdvancedAudioEngine {
+      constructor() {
+        this.isPlaying = false;
+        this.bpm = 120;
+        this.currentMode = 0;
+        this.currentPattern = 0;
+        
+        this.modes = ['AMBIENT', 'TECHNO', 'DUBSTEP', 'TRANCE', 'EXPERIMENTAL'];
+        this.patterns = ['EUCLIDEAN', 'RANDOM', 'SPIRAL', 'CHAOS', 'HARMONIC'];
+        
+        this.synths = {};
+        this.effects = {};
+        this.sequences = [];
+        this.analyzer = null;
+        this.meter = null;
+      }
+      
+      async init() {
+        // Initialize Tone.js
+        await Tone.start();
+        
+        // Create synthesizers
+        this.synths.bass = new Tone.MonoSynth({
+          oscillator: { type: 'sawtooth' },
+          envelope: { attack: 0.01, decay: 0.3, sustain: 0.4, release: 0.5 },
+          filterEnvelope: { attack: 0.01, decay: 0.1, sustain: 0.3, release: 0.5, baseFrequency: 100, octaves: 2 }
+        });
+        
+        this.synths.lead = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: 'square' },
+          envelope: { attack: 0.02, decay: 0.1, sustain: 0.3, release: 0.4 }
+        });
+        
+        this.synths.pad = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: 'sine' },
+          envelope: { attack: 0.5, decay: 0.2, sustain: 0.8, release: 2 }
+        });
+        
+        this.synths.drums = new Tone.Sampler({
+          urls: {
+            C2: 'https://tonejs.github.io/audio/drum-samples/kick.mp3',
+            D2: 'https://tonejs.github.io/audio/drum-samples/snare.mp3',
+            E2: 'https://tonejs.github.io/audio/drum-samples/hihat.mp3'
+          },
+          onload: () => console.log('Drums loaded')
+        });
+        
+        // Create effects chain
+        this.effects.reverb = new Tone.Reverb({ decay: 2.5, wet: 0.3 });
+        this.effects.delay = new Tone.FeedbackDelay('8n', 0.3);
+        this.effects.chorus = new Tone.Chorus(4, 2.5, 0.5);
+        this.effects.distortion = new Tone.Distortion(0.1);
+        this.effects.filter = new Tone.AutoFilter('4n').start();
+        this.effects.compressor = new Tone.Compressor(-30, 10);
+        
+        // Connect audio graph
+        const master = new Tone.Gain(0.7);
+        
+        this.synths.bass.connect(this.effects.distortion);
+        this.effects.distortion.connect(this.effects.compressor);
+        
+        this.synths.lead.connect(this.effects.delay);
+        this.effects.delay.connect(this.effects.reverb);
+        
+        this.synths.pad.connect(this.effects.chorus);
+        this.effects.chorus.connect(this.effects.reverb);
+        
+        this.synths.drums.connect(this.effects.compressor);
+        
+        this.effects.reverb.connect(master);
+        this.effects.compressor.connect(master);
+        master.toDestination();
+        
+        // Create analyzer for visualization
+        this.analyzer = new Tone.Analyser('waveform', 256);
+        master.connect(this.analyzer);
+        
+        // Create meter for beat detection
+        this.meter = new Tone.Meter();
+        master.connect(this.meter);
+        
+        this.setupSequences();
+      }
+      
+      setupSequences() {
+        // Clear existing sequences
+        this.sequences.forEach(seq => seq.dispose());
+        this.sequences = [];
+        
+        const mode = this.modes[this.currentMode];
+        const pattern = this.patterns[this.currentPattern];
+        
+        // Generate patterns based on mode
+        if (mode === 'AMBIENT') {
+          this.setupAmbientMode();
+        } else if (mode === 'TECHNO') {
+          this.setupTechnoMode();
+        } else if (mode === 'DUBSTEP') {
+          this.setupDubstepMode();
+        } else if (mode === 'TRANCE') {
+          this.setupTranceMode();
+        } else {
+          this.setupExperimentalMode();
+        }
+      }
+      
+      setupAmbientMode() {
+        // Ambient pad progression
+        const chords = [
+          ['C4', 'E4', 'G4', 'B4'],
+          ['A3', 'C4', 'E4', 'G4'],
+          ['F3', 'A3', 'C4', 'E4'],
+          ['G3', 'B3', 'D4', 'F4']
+        ];
+        
+        const padSeq = new Tone.Sequence((time, chord) => {
+          this.synths.pad.triggerAttackRelease(chord, '2n', time);
+        }, chords, '1n');
+        
+        // Sparse melodic elements
+        const melody = ['C5', 'E5', 'G5', 'B5', 'G5', 'E5', 'C5', null];
+        const leadSeq = new Tone.Sequence((time, note) => {
+          if (note) this.synths.lead.triggerAttackRelease(note, '8n', time);
+        }, melody, '8n');
+        
+        this.sequences.push(padSeq, leadSeq);
+      }
+      
+      setupTechnoMode() {
+        // 4/4 kick pattern
+        const kickPattern = EuclideanRhythm.generate(16, 4);
+        const kickSeq = new Tone.Sequence((time, hit) => {
+          if (hit) this.synths.drums.triggerAttackRelease('C2', '8n', time);
+        }, kickPattern, '16n');
+        
+        // Hi-hat pattern
+        const hihatPattern = EuclideanRhythm.generate(16, 10);
+        const hihatSeq = new Tone.Sequence((time, hit) => {
+          if (hit) this.synths.drums.triggerAttackRelease('E2', '32n', time);
+        }, hihatPattern, '16n');
+        
+        // Bass line
+        const bassNotes = ['C2', 'C2', 'G2', 'C2', 'A#1', 'A#1', 'F2', 'C2'];
+        const bassSeq = new Tone.Sequence((time, note) => {
+          this.synths.bass.triggerAttackRelease(note, '16n', time);
+        }, bassNotes, '16n');
+        
+        // Techno lead
+        const leadNotes = ['C5', null, 'E5', null, 'G5', null, 'C6', null];
+        const leadSeq = new Tone.Pattern((time, note) => {
+          if (note) this.synths.lead.triggerAttackRelease(note, '16n', time);
+        }, leadNotes, 'upDown');
+        
+        this.sequences.push(kickSeq, hihatSeq, bassSeq, leadSeq);
+      }
+      
+      setupDubstepMode() {
+        Tone.Transport.bpm.value = 140;
+        
+        // Heavy sub bass
+        const dubBass = ['C1', null, null, 'C1', null, 'G1', null, 'C1'];
+        const bassSeq = new Tone.Sequence((time, note) => {
+          if (note) {
+            this.synths.bass.triggerAttackRelease(note, '4n', time);
+          }
+        }, dubBass, '8n');
+        
+        // Snare on 3
+        const snareSeq = new Tone.Loop((time) => {
+          this.synths.drums.triggerAttackRelease('D2', '8n', time);
+        }, '2n').start('2n');
+        
+        this.sequences.push(bassSeq);
+        this.sequences.push({ start: () => snareSeq, stop: () => snareSeq.stop(), dispose: () => {} });
+      }
+      
+      setupTranceMode() {
+        Tone.Transport.bpm.value = 138;
+        
+        // Trance bass (rolling)
+        const bassPattern = ['C3', 'C3', 'C3', 'C3'];
+        const bassSeq = new Tone.Sequence((time, note) => {
+          this.synths.bass.triggerAttackRelease(note, '32n', time);
+        }, bassPattern, '16n');
+        
+        // Trance lead arpeggio
+        const arp = ['C5', 'E5', 'G5', 'C6', 'G5', 'E5'];
+        const arpSeq = new Tone.Pattern((time, note) => {
+          this.synths.lead.triggerAttackRelease(note, '16n', time);
+        }, arp, 'up');
+        
+        // Pads
+        const pads = [['C4', 'E4', 'G4'], ['F4', 'A4', 'C5']];
+        const padSeq = new Tone.Sequence((time, chord) => {
+          this.synths.pad.triggerAttackRelease(chord, '1n', time);
+        }, pads, '2n');
+        
+        this.sequences.push(bassSeq, arpSeq, padSeq);
+      }
+      
+      setupExperimentalMode() {
+        // Generative patterns using randomness and algorithms
+        const randomSeq = new Tone.Loop((time) => {
+          if (Math.random() > 0.7) {
+            const note = ['C', 'D', 'E', 'F', 'G', 'A', 'B'][Math.floor(Math.random() * 7)];
+            const octave = Math.floor(Math.random() * 3) + 3;
+            this.synths.lead.triggerAttackRelease(`${note}${octave}`, '16n', time);
+          }
+          
+          if (Math.random() > 0.8) {
+            this.synths.drums.triggerAttackRelease('C2', '8n', time);
+          }
+          
+          if (Math.random() > 0.9) {
+            const bassNote = ['C2', 'G2', 'F2', 'A#2'][Math.floor(Math.random() * 4)];
+            this.synths.bass.triggerAttackRelease(bassNote, '8n', time);
+          }
+        }, '16n');
+        
+        this.sequences.push({ 
+          start: () => randomSeq.start(0), 
+          stop: () => randomSeq.stop(), 
+          dispose: () => randomSeq.dispose() 
+        });
+      }
+      
+      async start() {
+        if (!this.synths.bass) {
+          await this.init();
+        }
+        
+        this.sequences.forEach(seq => seq.start(0));
+        Tone.Transport.start();
+        this.isPlaying = true;
+      }
+      
+      stop() {
+        this.sequences.forEach(seq => seq.stop());
+        Tone.Transport.stop();
+        this.isPlaying = false;
+      }
+      
+      changeMode() {
+        this.currentMode = (this.currentMode + 1) % this.modes.length;
+        const wasPlaying = this.isPlaying;
+        if (wasPlaying) this.stop();
+        this.setupSequences();
+        if (wasPlaying) this.start();
+        return this.modes[this.currentMode];
+      }
+      
+      changePattern() {
+        this.currentPattern = (this.currentPattern + 1) % this.patterns.length;
+        const wasPlaying = this.isPlaying;
+        if (wasPlaying) this.stop();
+        this.setupSequences();
+        if (wasPlaying) this.start();
+        return this.patterns[this.currentPattern];
+      }
+      
+      changeTempo(delta) {
+        this.bpm = Math.max(60, Math.min(200, this.bpm + delta));
+        Tone.Transport.bpm.value = this.bpm;
+        return this.bpm;
+      }
+      
+      getWaveform() {
+        return this.analyzer ? this.analyzer.getValue() : new Float32Array(256);
+      }
+      
+      getLevel() {
+        return this.meter ? this.meter.getValue() : -60;
+      }
+    }
+    
+    // WebXR Synthesizer App
+    class WebXRSynthApp {
+      constructor() {
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.clock = new THREE.Clock();
+        
+        this.audio = new AdvancedAudioEngine();
+        this.visualMode = 0;
+        this.visualModes = ['PARTICLES', 'GEOMETRY', 'FRACTAL', 'WAVES', 'MATRIX'];
+        
+        this.xrSession = null;
+        this.xrReferenceSpace = null;
+        
+        this.objects = {
+          orb: null,
+          particles: null,
+          frequencyBars: [],
+          environment: null,
+          skybox: null
+        };
+        
+        this.init();
+      }
+      
+      async init() {
+        try {
+          this.setupRenderer();
+          this.setupScene();
+          this.setupLights();
+          this.createEnvironment();
+          this.createVisualizers();
+          this.setupXR();
+          this.setupEventListeners();
+          await this.audio.init();
+          
+          document.getElementById('loading').classList.add('hidden');
+          this.animate();
+          
+        } catch (error) {
+          console.error('Initialization error:', error);
+          document.getElementById('loading').textContent = 'Error: ' + error.message;
+        }
+      }
+      
+      setupRenderer() {
+        this.renderer = new THREE.WebGLRenderer({ 
+          canvas: document.getElementById('canvas'),
+          antialias: true,
+          alpha: false,
+          powerPreference: 'high-performance'
+        });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        this.renderer.toneMappingExposure = 1.0;
+        this.renderer.xr.enabled = true;
+      }
+      
+      setupScene() {
+        this.scene = new THREE.Scene();
+        this.scene.fog = new THREE.FogExp2(0x000033, 0.02);
+        
+        this.camera = new THREE.PerspectiveCamera(
+          75,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          1000
+        );
+        this.camera.position.set(0, 1.6, 3);
+        this.camera.lookAt(0, 0, 0);
+      }
+      
+      setupLights() {
+        // Ambient light
+        const ambient = new THREE.AmbientLight(0x404040, 0.5);
+        this.scene.add(ambient);
+        
+        // Main directional light
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(5, 10, 5);
+        dirLight.castShadow = true;
+        dirLight.shadow.camera.near = 0.1;
+        dirLight.shadow.camera.far = 50;
+        dirLight.shadow.camera.left = -10;
+        dirLight.shadow.camera.right = 10;
+        dirLight.shadow.camera.top = 10;
+        dirLight.shadow.camera.bottom = -10;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        this.scene.add(dirLight);
+        
+        // Point lights for ambiance
+        const colors = [0xff00ff, 0x00ffff, 0xffff00];
+        colors.forEach((color, i) => {
+          const light = new THREE.PointLight(color, 0.5, 10);
+          light.position.set(
+            Math.cos(i * Math.PI * 2 / 3) * 5,
+            2,
+            Math.sin(i * Math.PI * 2 / 3) * 5
+          );
+          this.scene.add(light);
+        });
+      }
+      
+      createEnvironment() {
+        // Create floor
+        const floorGeometry = new THREE.PlaneGeometry(50, 50);
+        const floorMaterial = new THREE.MeshStandardMaterial({
+          color: 0x111111,
+          metalness: 0.8,
+          roughness: 0.2
+        });
+        const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+        floor.rotation.x = -Math.PI / 2;
+        floor.receiveShadow = true;
+        this.scene.add(floor);
+        
+        // Create grid
+        const grid = new THREE.GridHelper(50, 50, 0x00ffff, 0x003333);
+        this.scene.add(grid);
+        
+        // Create skybox with stars
+        const starsGeometry = new THREE.BufferGeometry();
+        const starsCount = 10000;
+        const positions = new Float32Array(starsCount * 3);
+        const colors = new Float32Array(starsCount * 3);
+        
+        for (let i = 0; i < starsCount * 3; i += 3) {
+          const radius = 100 + Math.random() * 400;
+          const theta = Math.random() * Math.PI * 2;
+          const phi = Math.acos(2 * Math.random() - 1);
+          
+          positions[i] = radius * Math.sin(phi) * Math.cos(theta);
+          positions[i + 1] = radius * Math.sin(phi) * Math.sin(theta);
+          positions[i + 2] = radius * Math.cos(phi);
+          
+          const color = new THREE.Color();
+          color.setHSL(Math.random(), 0.7, 0.8);
+          colors[i] = color.r;
+          colors[i + 1] = color.g;
+          colors[i + 2] = color.b;
+        }
+        
+        starsGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        starsGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        
+        const starsMaterial = new THREE.PointsMaterial({
+          size: 0.5,
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.8,
+          blending: THREE.AdditiveBlending
+        });
+        
+        this.objects.skybox = new THREE.Points(starsGeometry, starsMaterial);
+        this.scene.add(this.objects.skybox);
+      }
+      
+      createVisualizers() {
+        // Main Orb
+        const orbGeometry = new THREE.IcosahedronGeometry(1, 4);
+        const orbMaterial = new THREE.MeshPhysicalMaterial({
+          color: 0x00ffff,
+          emissive: 0x00ffff,
+          emissiveIntensity: 0.5,
+          metalness: 0.8,
+          roughness: 0.2,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.1,
+          transparent: true,
+          opacity: 0.9,
+          side: THREE.DoubleSide
+        });
+        
+        this.objects.orb = new THREE.Mesh(orbGeometry, orbMaterial);
+        this.objects.orb.position.y = 1.5;
+        this.objects.orb.castShadow = true;
+        this.scene.add(this.objects.orb);
+        
+        // Inner orb with wireframe
+        const innerGeometry = new THREE.IcosahedronGeometry(0.98, 4);
+        const innerMaterial = new THREE.MeshBasicMaterial({
+          color: 0xff00ff,
+          wireframe: true,
+          transparent: true,
+          opacity: 0.5
+        });
+        const innerOrb = new THREE.Mesh(innerGeometry, innerMaterial);
+        this.objects.orb.add(innerOrb);
+        
+        // Particle system
+        const particleCount = 5000;
+        const particleGeometry = new THREE.BufferGeometry();
+        const particlePositions = new Float32Array(particleCount * 3);
+        const particleColors = new Float32Array(particleCount * 3);
+        const particleSizes = new Float32Array(particleCount);
+        
+        for (let i = 0; i < particleCount; i++) {
+          const i3 = i * 3;
+          const radius = 3 + Math.random() * 7;
+          const theta = Math.random() * Math.PI * 2;
+          const phi = Math.acos(2 * Math.random() - 1);
+          
+          particlePositions[i3] = radius * Math.sin(phi) * Math.cos(theta);
+          particlePositions[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+          particlePositions[i3 + 2] = radius * Math.cos(phi);
+          
+          const color = new THREE.Color();
+          color.setHSL(Math.random(), 1, 0.5);
+          particleColors[i3] = color.r;
+          particleColors[i3 + 1] = color.g;
+          particleColors[i3 + 2] = color.b;
+          
+          particleSizes[i] = Math.random() * 0.1 + 0.05;
+        }
+        
+        particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+        particleGeometry.setAttribute('color', new THREE.BufferAttribute(particleColors, 3));
+        particleGeometry.setAttribute('size', new THREE.BufferAttribute(particleSizes, 1));
+        
+        const particleMaterial = new THREE.ShaderMaterial({
+          uniforms: {
+            time: { value: 0 },
+            audioLevel: { value: 0 }
+          },
+          vertexShader: `
+            attribute float size;
+            varying vec3 vColor;
+            uniform float time;
+            uniform float audioLevel;
+            
+            void main() {
+              vColor = color;
+              vec3 pos = position;
+              pos += sin(time + position.x) * 0.1;
+              pos += cos(time + position.y) * 0.1;
+              pos *= 1.0 + audioLevel * 0.2;
+              
+              vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+              gl_PointSize = size * (300.0 / -mvPosition.z) * (1.0 + audioLevel);
+              gl_Position = projectionMatrix * mvPosition;
+            }
+          `,
+          fragmentShader: `
+            varying vec3 vColor;
+            
+            void main() {
+              vec2 center = gl_PointCoord - vec2(0.5);
+              float dist = length(center);
+              if (dist > 0.5) discard;
+              
+              float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+              gl_FragColor = vec4(vColor, alpha);
+            }
+          `,
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          vertexColors: true
+        });
+        
+        this.objects.particles = new THREE.Points(particleGeometry, particleMaterial);
+        this.scene.add(this.objects.particles);
+        
+        // Frequency bars (circular arrangement)
+        const barCount = 32;
+        const barGeometry = new THREE.BoxGeometry(0.1, 1, 0.1);
+        
+        for (let i = 0; i < barCount; i++) {
+          const angle = (i / barCount) * Math.PI * 2;
+          const radius = 4;
+          
+          const barMaterial = new THREE.MeshPhysicalMaterial({
+            color: new THREE.Color().setHSL(i / barCount, 1, 0.5),
+            emissive: new THREE.Color().setHSL(i / barCount, 1, 0.5),
+            emissiveIntensity: 0.5,
+            metalness: 0.8,
+            roughness: 0.2
+          });
+          
+          const bar = new THREE.Mesh(barGeometry, barMaterial);
+          bar.position.x = Math.cos(angle) * radius;
+          bar.position.z = Math.sin(angle) * radius;
+          bar.position.y = 0.5;
+          bar.castShadow = true;
+          
+          this.objects.frequencyBars.push(bar);
+          this.scene.add(bar);
+        }
+      }
+      
+      setupXR() {
+        // Check for WebXR support
+        if ('xr' in navigator) {
+          navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+            if (supported) {
+              const vrButton = VRButton.createButton(this.renderer);
+              document.body.appendChild(vrButton);
+              document.getElementById('vr-button').classList.add('hidden');
+              document.getElementById('xr-status').textContent = 'VR READY';
+            } else {
+              document.getElementById('xr-status').textContent = 'VR NOT SUPPORTED';
+            }
+          });
+          
+          // Check for AR support
+          navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+            if (supported) {
+              document.getElementById('xr-status').textContent = 'AR READY';
+            }
+          });
+        } else {
+          document.getElementById('xr-status').textContent = 'NO XR';
+        }
+      }
+      
+      setupEventListeners() {
+        // Play/Stop
+        document.getElementById('play-btn').addEventListener('click', async () => {
+          if (this.audio.isPlaying) {
+            this.audio.stop();
+            document.getElementById('play-btn').textContent = 'PLAY';
+            document.getElementById('play-btn').classList.remove('active');
+          } else {
+            await this.audio.start();
+            document.getElementById('play-btn').textContent = 'STOP';
+            document.getElementById('play-btn').classList.add('active');
+          }
+        });
+        
+        // Change mode
+        document.getElementById('mode-btn').addEventListener('click', () => {
+          const newMode = this.audio.changeMode();
+          document.getElementById('mode').textContent = newMode;
+        });
+        
+        // Change pattern
+        document.getElementById('pattern-btn').addEventListener('click', () => {
+          const newPattern = this.audio.changePattern();
+          document.getElementById('pattern').textContent = newPattern;
+        });
+        
+        // Change tempo
+        document.getElementById('tempo-btn').addEventListener('click', () => {
+          const newBPM = this.audio.changeTempo(10);
+          document.getElementById('bpm').textContent = newBPM;
+        });
+        
+        // Change visuals
+        document.getElementById('visual-btn').addEventListener('click', () => {
+          this.visualMode = (this.visualMode + 1) % this.visualModes.length;
+          this.updateVisualMode();
+        });
+        
+        // Window resize
+        window.addEventListener('resize', () => {
+          this.camera.aspect = window.innerWidth / window.innerHeight;
+          this.camera.updateProjectionMatrix();
+          this.renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Keyboard controls
+        window.addEventListener('keydown', (e) => {
+          switch(e.key) {
+            case ' ':
+              document.getElementById('play-btn').click();
+              break;
+            case 'm':
+              document.getElementById('mode-btn').click();
+              break;
+            case 'p':
+              document.getElementById('pattern-btn').click();
+              break;
+            case 'ArrowUp':
+              this.audio.changeTempo(5);
+              document.getElementById('bpm').textContent = this.audio.bpm;
+              break;
+            case 'ArrowDown':
+              this.audio.changeTempo(-5);
+              document.getElementById('bpm').textContent = this.audio.bpm;
+              break;
+          }
+        });
+      }
+      
+      updateVisualMode() {
+        const mode = this.visualModes[this.visualMode];
+        
+        // Reset visibility
+        this.objects.particles.visible = mode === 'PARTICLES';
+        this.objects.frequencyBars.forEach(bar => bar.visible = mode !== 'MATRIX');
+        
+        // Apply mode-specific changes
+        switch(mode) {
+          case 'GEOMETRY':
+            this.objects.orb.material.wireframe = false;
+            break;
+          case 'FRACTAL':
+            this.objects.orb.material.wireframe = true;
+            break;
+          case 'WAVES':
+            // Wave distortion handled in animation
+            break;
+          case 'MATRIX':
+            // Matrix rain effect
+            break;
+        }
+      }
+      
+      animate() {
+        this.renderer.setAnimationLoop(() => {
+          const deltaTime = this.clock.getDelta();
+          const elapsedTime = this.clock.getElapsedTime();
+          
+          // Update FPS
+          document.getElementById('fps').textContent = Math.round(1 / deltaTime);
+          
+          // Get audio data
+          const waveform = this.audio.getWaveform();
+          const level = Math.max(0, (this.audio.getLevel() + 60) / 60);
+          
+          // Animate main orb
+          if (this.objects.orb) {
+            this.objects.orb.rotation.x += deltaTime * 0.5;
+            this.objects.orb.rotation.y += deltaTime * 0.3;
+            
+            const scale = 1 + level * 0.5;
+            this.objects.orb.scale.set(scale, scale, scale);
+            
+            // Color based on audio
+            const hue = (elapsedTime * 0.1 + level) % 1;
+            this.objects.orb.material.color.setHSL(hue, 1, 0.5);
+            this.objects.orb.material.emissive.setHSL(hue, 1, 0.5);
+          }
+          
+          // Animate particles
+          if (this.objects.particles) {
+            this.objects.particles.rotation.y += deltaTime * 0.1;
+            this.objects.particles.material.uniforms.time.value = elapsedTime;
+            this.objects.particles.material.uniforms.audioLevel.value = level;
+          }
+          
+          // Animate frequency bars
+          this.objects.frequencyBars.forEach((bar, i) => {
+            const freqIndex = Math.floor((i / this.objects.frequencyBars.length) * waveform.length);
+            const freqValue = Math.abs(waveform[freqIndex]) || 0;
+            
+            bar.scale.y = 0.1 + freqValue * 5;
+            bar.position.y = bar.scale.y / 2;
+            
+            // Color based on frequency
+            const hue = (i / this.objects.frequencyBars.length + elapsedTime * 0.1) % 1;
+            bar.material.color.setHSL(hue, 1, 0.5 + freqValue * 0.5);
+            bar.material.emissiveIntensity = freqValue;
+          });
+          
+          // Animate skybox
+          if (this.objects.skybox) {
+            this.objects.skybox.rotation.y += deltaTime * 0.01;
+          }
+          
+          // Render scene
+          this.renderer.render(this.scene, this.camera);
+        });
+      }
+    }
+    
+    // Initialize app
+    const app = new WebXRSynthApp();
+  </script>
+</body>
+</html>
