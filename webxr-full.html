@@ -958,42 +958,41 @@
       }
       
       setupXRControllers() {
-        // Check if we're in AR mode (Rokid glasses) or VR mode
-        this.isARMode = false;
+        // For Rokid Max 2 + Station 2: Use viewer-based raycast
+        // Station 2 controller is 3DOF and may not register as standard WebXR controller
         
-        // Create gaze pointer for AR mode (comes from HMD/camera)
-        this.gazePointer = new THREE.Group();
+        // Create a viewer/head-based ray for Rokid (always visible as fallback)
+        this.viewerRay = new THREE.Group();
         
-        // Create gaze beam that comes from camera/HMD position
-        const gazeBeamGeometry = new THREE.CylinderGeometry(0.005, 0.02, 5, 8);
-        gazeBeamGeometry.translate(0, -2.5, 0);
-        gazeBeamGeometry.rotateX(-Math.PI / 2);
+        // Create ray that extends from viewer/camera position
+        const rayGeometry = new THREE.CylinderGeometry(0.002, 0.01, 8, 6);
+        rayGeometry.translate(0, -4, 0);
+        rayGeometry.rotateX(-Math.PI / 2);
         
-        const gazeBeamMaterial = new THREE.MeshBasicMaterial({
-          color: 0xff00ff,  // Purple for gaze
+        const rayMaterial = new THREE.MeshBasicMaterial({
+          color: 0x00ffff,
           transparent: true,
-          opacity: 0.7,
-          emissive: 0xff00ff,
-          emissiveIntensity: 0.5
+          opacity: 0.6
         });
         
-        this.gazeBeam = new THREE.Mesh(gazeBeamGeometry, gazeBeamMaterial);
-        this.gazePointer.add(this.gazeBeam);
+        this.viewerBeam = new THREE.Mesh(rayGeometry, rayMaterial);
+        this.viewerRay.add(this.viewerBeam);
         
-        // Add gaze reticle/crosshair
-        const reticleGeometry = new THREE.RingGeometry(0.02, 0.03, 32);
-        const reticleMaterial = new THREE.MeshBasicMaterial({
-          color: 0xffffff,
+        // Add targeting reticle at end of ray
+        const targetGeometry = new THREE.RingGeometry(0.05, 0.08, 16);
+        const targetMaterial = new THREE.MeshBasicMaterial({
+          color: 0x00ff00,
           side: THREE.DoubleSide,
           transparent: true,
-          opacity: 0.9
+          opacity: 0.8
         });
-        this.gazeReticle = new THREE.Mesh(reticleGeometry, reticleMaterial);
-        this.gazeReticle.position.z = -2;  // Position in front of camera
-        this.gazePointer.add(this.gazeReticle);
+        this.targetReticle = new THREE.Mesh(targetGeometry, targetMaterial);
+        this.targetReticle.position.z = -8;
+        this.viewerRay.add(this.targetReticle);
         
-        // The gaze pointer will be added to camera in AR mode
-        this.gazePointer.visible = false;
+        // Add ray to camera so it moves with head/viewer
+        this.camera.add(this.viewerRay);
+        this.viewerRay.visible = false; // Will be enabled in XR session
         
         // Create controllers (Station 2 controller or VR hand controllers)
         this.controller1 = this.renderer.xr.getController(0);
@@ -1153,40 +1152,41 @@
         }
       }
       
-      onARGazeSelect() {
-        // Handle gaze selection in AR mode
-        console.log('AR Gaze Select');
+      onXRSelect(event) {
+        // Handle selection from any XR input source
+        console.log('XR Select - Input source:', event.inputSource);
         
         // Toggle audio or change mode
         if (!this.audio.isPlaying) {
           this.audio.start();
-          console.log('Starting audio from AR gaze');
+          console.log('Starting audio from XR select');
         } else {
           const newMode = this.audio.changeMode();
           console.log('Changed mode to:', newMode);
         }
         
-        // Visual feedback on gaze beam
-        if (this.gazeBeam && this.gazeBeam.material) {
+        // Visual feedback on viewer ray
+        if (this.viewerBeam && this.viewerBeam.material) {
           // Flash the beam
-          this.gazeBeam.material.color.setHex(0xffff00);
-          this.gazeBeam.material.opacity = 1.0;
+          const originalColor = this.viewerBeam.material.color.getHex();
+          this.viewerBeam.material.color.setHex(0xffff00);
+          this.viewerBeam.material.opacity = 1.0;
           
           setTimeout(() => {
-            this.gazeBeam.material.color.setHex(0xff00ff);
-            this.gazeBeam.material.opacity = 0.7;
+            this.viewerBeam.material.color.setHex(originalColor);
+            this.viewerBeam.material.opacity = 0.6;
           }, 200);
         }
         
-        // Perform raycasting from camera to see what we're looking at
+        // Perform raycasting from camera center
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
         
-        // Check intersection with orb
+        // Check intersection with interactive objects
         if (this.objects.orb) {
           const intersects = raycaster.intersectObject(this.objects.orb, true);
           if (intersects.length > 0) {
-            // Looking at the orb - make it pulse
+            // Hit the orb - make it pulse
             const scale = 1.5;
             this.objects.orb.scale.set(scale, scale, scale);
             setTimeout(() => {
@@ -1194,6 +1194,15 @@
             }, 300);
           }
         }
+        
+        // Check intersection with frequency bars
+        this.objects.frequencyBars.forEach((bar, index) => {
+          const intersects = raycaster.intersectObject(bar);
+          if (intersects.length > 0) {
+            // Hit a frequency bar - change its color
+            bar.material.color.setHex(Math.random() * 0xffffff);
+          }
+        });
       }
       
       handleVRMovement(deltaTime) {
@@ -1276,19 +1285,47 @@
           const referenceSpace = await session.requestReferenceSpace('local');
           this.xrReferenceSpace = referenceSpace;
           
-          // Configure controls - Station 2 controller works for both AR and VR
-          console.log(`${mode} mode - Setting up controllers`);
+          // Configure controls for Rokid Max 2 + Station 2
+          console.log(`${mode} mode - Checking for input sources`);
           
-          // The Station 2 controller should work the same in AR or VR
-          // Controllers will become visible when they connect (see connected event)
-          
-          // Add select listener for both modes
-          session.addEventListener('select', (event) => {
-            console.log('XR Select event from input source');
-            // This handles Station 2 controller select button
-            if (this.isARMode) {
-              this.onARGazeSelect();
+          // Check what input sources are available
+          session.addEventListener('inputsourceschange', (event) => {
+            console.log('Input sources changed:', {
+              added: event.added.length,
+              removed: event.removed.length,
+              session: session.inputSources.length
+            });
+            
+            // Log details about each input source
+            for (const source of session.inputSources) {
+              console.log('Input source:', {
+                handedness: source.handedness,
+                targetRayMode: source.targetRayMode,
+                profiles: source.profiles
+              });
             }
+            
+            // If no controllers detected, use viewer ray
+            if (session.inputSources.length === 0) {
+              console.log('No controllers detected - using viewer ray');
+              this.viewerRay.visible = true;
+            }
+          });
+          
+          // Enable viewer ray immediately for Rokid
+          this.viewerRay.visible = true;
+          console.log('Viewer ray enabled for Rokid Max 2');
+          
+          // Add select listener for input events
+          session.addEventListener('select', (event) => {
+            console.log('XR Select event:', event);
+            this.onXRSelect(event);
+          });
+          
+          // Also listen for squeeze events (grip button)
+          session.addEventListener('squeeze', (event) => {
+            console.log('XR Squeeze event:', event);
+            this.onXRSelect(event);
           });
           
           // Update button
