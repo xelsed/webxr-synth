@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebXR Synth - Working Version</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+    }
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 10px;
+      border-radius: 5px;
+      font-size: 14px;
+      z-index: 100;
+    }
+    #controls {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      z-index: 100;
+    }
+    button {
+      padding: 10px 20px;
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 25px;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+      font-size: 14px;
+      font-weight: bold;
+      transition: all 0.3s;
+    }
+    button:hover {
+      background: rgba(255, 255, 255, 0.3);
+      transform: scale(1.05);
+    }
+    button:active {
+      transform: scale(0.95);
+    }
+    #loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: white;
+      font-size: 24px;
+      text-align: center;
+      z-index: 200;
+    }
+    .pulse {
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  
+  <div id="info">
+    <div>WebXR Audio Synthesizer</div>
+    <div>FPS: <span id="fps">0</span></div>
+    <div>Status: <span id="status">Loading...</span></div>
+  </div>
+  
+  <div id="loading" class="pulse">Initializing...</div>
+  
+  <div id="controls" class="hidden">
+    <button id="play-btn">Play Audio</button>
+    <button id="mode-btn">Change Mode</button>
+    <button id="reset-btn">Reset</button>
+  </div>
+
+  <script type="module">
+    // Import libraries from CDN
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+    
+    // Simple audio using Web Audio API (Tone.js alternative)
+    class SimpleAudio {
+      constructor() {
+        this.audioContext = null;
+        this.oscillator = null;
+        this.gainNode = null;
+        this.isPlaying = false;
+        this.noteIndex = 0;
+        this.notes = [261.63, 329.63, 392.00, 523.25]; // C4, E4, G4, C5
+      }
+      
+      async init() {
+        if (!this.audioContext) {
+          this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          this.gainNode = this.audioContext.createGain();
+          this.gainNode.gain.value = 0.3;
+          this.gainNode.connect(this.audioContext.destination);
+        }
+      }
+      
+      async start() {
+        await this.init();
+        if (this.audioContext.state === 'suspended') {
+          await this.audioContext.resume();
+        }
+        
+        this.isPlaying = true;
+        this.playNextNote();
+      }
+      
+      playNextNote() {
+        if (!this.isPlaying) return;
+        
+        // Stop previous oscillator
+        if (this.oscillator) {
+          this.oscillator.stop();
+        }
+        
+        // Create new oscillator
+        this.oscillator = this.audioContext.createOscillator();
+        this.oscillator.type = 'sine';
+        this.oscillator.frequency.value = this.notes[this.noteIndex];
+        this.oscillator.connect(this.gainNode);
+        this.oscillator.start();
+        
+        // Fade in and out
+        const now = this.audioContext.currentTime;
+        this.gainNode.gain.cancelScheduledValues(now);
+        this.gainNode.gain.setValueAtTime(0, now);
+        this.gainNode.gain.linearRampToValueAtTime(0.3, now + 0.05);
+        this.gainNode.gain.linearRampToValueAtTime(0, now + 0.2);
+        
+        // Schedule next note
+        this.noteIndex = (this.noteIndex + 1) % this.notes.length;
+        setTimeout(() => this.playNextNote(), 250);
+      }
+      
+      stop() {
+        this.isPlaying = false;
+        if (this.oscillator) {
+          this.oscillator.stop();
+          this.oscillator = null;
+        }
+      }
+    }
+    
+    // Main App Class
+    class WebXRSynthApp {
+      constructor() {
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.clock = new THREE.Clock();
+        this.orb = null;
+        this.particles = null;
+        this.audio = new SimpleAudio();
+        this.mode = 0;
+        this.colors = [0x00ffff, 0xff00ff, 0xffff00, 0x00ff00];
+        
+        this.init();
+      }
+      
+      async init() {
+        try {
+          console.log('Initializing app...');
+          this.setupScene();
+          this.createObjects();
+          this.setupEventListeners();
+          this.hideLoading();
+          this.animate();
+          console.log('App initialized successfully');
+        } catch (error) {
+          console.error('Initialization error:', error);
+          document.getElementById('loading').textContent = 'Error: ' + error.message;
+        }
+      }
+      
+      setupScene() {
+        // Scene
+        this.scene = new THREE.Scene();
+        this.scene.fog = new THREE.Fog(0x000033, 5, 50);
+        
+        // Camera
+        this.camera = new THREE.PerspectiveCamera(
+          75,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          1000
+        );
+        this.camera.position.set(0, 2, 5);
+        this.camera.lookAt(0, 0, 0);
+        
+        // Renderer
+        this.renderer = new THREE.WebGLRenderer({ 
+          antialias: true,
+          alpha: true,
+          powerPreference: "high-performance"
+        });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.getElementById('canvas-container').appendChild(this.renderer.domElement);
+        
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+        this.scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        directionalLight.position.set(5, 10, 5);
+        this.scene.add(directionalLight);
+        
+        // Grid
+        const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+        this.scene.add(gridHelper);
+      }
+      
+      createObjects() {
+        // Create main orb
+        const orbGeometry = new THREE.IcosahedronGeometry(1, 2);
+        const orbMaterial = new THREE.MeshPhongMaterial({
+          color: 0x00ffff,
+          emissive: 0x00ffff,
+          emissiveIntensity: 0.2,
+          wireframe: true
+        });
+        this.orb = new THREE.Mesh(orbGeometry, orbMaterial);
+        this.orb.position.y = 1;
+        this.scene.add(this.orb);
+        
+        // Inner orb
+        const innerGeometry = new THREE.SphereGeometry(0.8, 16, 16);
+        const innerMaterial = new THREE.MeshBasicMaterial({
+          color: 0xff00ff,
+          transparent: true,
+          opacity: 0.3
+        });
+        const innerOrb = new THREE.Mesh(innerGeometry, innerMaterial);
+        this.orb.add(innerOrb);
+        
+        // Create particles
+        const particleCount = 100;
+        const particleGeometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        
+        for (let i = 0; i < particleCount * 3; i += 3) {
+          const angle = Math.random() * Math.PI * 2;
+          const radius = 2 + Math.random() * 3;
+          positions[i] = Math.cos(angle) * radius;
+          positions[i + 1] = Math.random() * 2;
+          positions[i + 2] = Math.sin(angle) * radius;
+        }
+        
+        particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        
+        const particleMaterial = new THREE.PointsMaterial({
+          color: 0xffffff,
+          size: 0.1,
+          transparent: true,
+          opacity: 0.6
+        });
+        
+        this.particles = new THREE.Points(particleGeometry, particleMaterial);
+        this.scene.add(this.particles);
+      }
+      
+      setupEventListeners() {
+        // Play button
+        document.getElementById('play-btn').addEventListener('click', async () => {
+          if (this.audio.isPlaying) {
+            this.audio.stop();
+            document.getElementById('play-btn').textContent = 'Play Audio';
+            document.getElementById('status').textContent = 'Stopped';
+          } else {
+            await this.audio.start();
+            document.getElementById('play-btn').textContent = 'Stop Audio';
+            document.getElementById('status').textContent = 'Playing';
+          }
+        });
+        
+        // Mode button
+        document.getElementById('mode-btn').addEventListener('click', () => {
+          this.mode = (this.mode + 1) % this.colors.length;
+          const color = this.colors[this.mode];
+          this.orb.material.color.setHex(color);
+          this.orb.material.emissive.setHex(color);
+          document.getElementById('status').textContent = 'Mode ' + (this.mode + 1);
+        });
+        
+        // Reset button
+        document.getElementById('reset-btn').addEventListener('click', () => {
+          this.reset();
+        });
+        
+        // Window resize
+        window.addEventListener('resize', () => {
+          this.camera.aspect = window.innerWidth / window.innerHeight;
+          this.camera.updateProjectionMatrix();
+          this.renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+      }
+      
+      reset() {
+        if (this.audio.isPlaying) {
+          this.audio.stop();
+          document.getElementById('play-btn').textContent = 'Play Audio';
+        }
+        
+        this.mode = 0;
+        this.orb.material.color.setHex(0x00ffff);
+        this.orb.material.emissive.setHex(0x00ffff);
+        this.orb.scale.set(1, 1, 1);
+        
+        document.getElementById('status').textContent = 'Reset';
+      }
+      
+      hideLoading() {
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('controls').classList.remove('hidden');
+        document.getElementById('status').textContent = 'Ready';
+      }
+      
+      animate() {
+        requestAnimationFrame(() => this.animate());
+        
+        const deltaTime = this.clock.getDelta();
+        const elapsedTime = this.clock.getElapsedTime();
+        
+        // Rotate orb
+        if (this.orb) {
+          this.orb.rotation.y += deltaTime * 0.5;
+          this.orb.rotation.x = Math.sin(elapsedTime * 0.3) * 0.1;
+          
+          // Pulse if playing audio
+          if (this.audio.isPlaying) {
+            const scale = 1 + Math.sin(elapsedTime * 4) * 0.1;
+            this.orb.scale.set(scale, scale, scale);
+          }
+        }
+        
+        // Rotate particles
+        if (this.particles) {
+          this.particles.rotation.y += deltaTime * 0.1;
+        }
+        
+        // Update FPS
+        const fps = Math.round(1 / deltaTime) || 0;
+        document.getElementById('fps').textContent = fps;
+        
+        // Render scene
+        this.renderer.render(this.scene, this.camera);
+      }
+    }
+    
+    // Start the application
+    console.log('Starting WebXR Synth App...');
+    const app = new WebXRSynthApp();
+  </script>
+</body>
+</html>
