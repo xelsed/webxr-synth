@@ -958,14 +958,51 @@
       }
       
       setupXRControllers() {
-        // Create controller grips
+        // Check if we're in AR mode (Rokid glasses) or VR mode
+        this.isARMode = false;
+        
+        // Create gaze pointer for AR mode (comes from HMD/camera)
+        this.gazePointer = new THREE.Group();
+        
+        // Create gaze beam that comes from camera/HMD position
+        const gazeBeamGeometry = new THREE.CylinderGeometry(0.005, 0.02, 5, 8);
+        gazeBeamGeometry.translate(0, -2.5, 0);
+        gazeBeamGeometry.rotateX(-Math.PI / 2);
+        
+        const gazeBeamMaterial = new THREE.MeshBasicMaterial({
+          color: 0xff00ff,  // Purple for gaze
+          transparent: true,
+          opacity: 0.7,
+          emissive: 0xff00ff,
+          emissiveIntensity: 0.5
+        });
+        
+        this.gazeBeam = new THREE.Mesh(gazeBeamGeometry, gazeBeamMaterial);
+        this.gazePointer.add(this.gazeBeam);
+        
+        // Add gaze reticle/crosshair
+        const reticleGeometry = new THREE.RingGeometry(0.02, 0.03, 32);
+        const reticleMaterial = new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.9
+        });
+        this.gazeReticle = new THREE.Mesh(reticleGeometry, reticleMaterial);
+        this.gazeReticle.position.z = -2;  // Position in front of camera
+        this.gazePointer.add(this.gazeReticle);
+        
+        // The gaze pointer will be added to camera in AR mode
+        this.gazePointer.visible = false;
+        
+        // Still create hand controllers for VR mode
         this.controller1 = this.renderer.xr.getController(0);
         this.controller2 = this.renderer.xr.getController(1);
         
         this.scene.add(this.controller1);
         this.scene.add(this.controller2);
         
-        // Create teleport/movement beam
+        // Create hand controller beams for VR mode
         const beamGeometry = new THREE.CylinderGeometry(0.01, 0.05, 10, 8);
         beamGeometry.translate(0, -5, 0);
         beamGeometry.rotateX(-Math.PI / 2);
@@ -1099,6 +1136,49 @@
         }
       }
       
+      onARGazeSelect() {
+        // Handle gaze selection in AR mode
+        console.log('AR Gaze Select');
+        
+        // Toggle audio or change mode
+        if (!this.audio.isPlaying) {
+          this.audio.start();
+          console.log('Starting audio from AR gaze');
+        } else {
+          const newMode = this.audio.changeMode();
+          console.log('Changed mode to:', newMode);
+        }
+        
+        // Visual feedback on gaze beam
+        if (this.gazeBeam && this.gazeBeam.material) {
+          // Flash the beam
+          this.gazeBeam.material.color.setHex(0xffff00);
+          this.gazeBeam.material.opacity = 1.0;
+          
+          setTimeout(() => {
+            this.gazeBeam.material.color.setHex(0xff00ff);
+            this.gazeBeam.material.opacity = 0.7;
+          }, 200);
+        }
+        
+        // Perform raycasting from camera to see what we're looking at
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+        
+        // Check intersection with orb
+        if (this.objects.orb) {
+          const intersects = raycaster.intersectObject(this.objects.orb, true);
+          if (intersects.length > 0) {
+            // Looking at the orb - make it pulse
+            const scale = 1.5;
+            this.objects.orb.scale.set(scale, scale, scale);
+            setTimeout(() => {
+              this.objects.orb.scale.set(1, 1, 1);
+            }, 300);
+          }
+        }
+      }
+      
       handleVRMovement(deltaTime) {
         // Handle thumbstick movement if gamepad is available
         const speed = 3 * deltaTime;
@@ -1158,6 +1238,9 @@
         try {
           console.log('Starting XR session:', mode);
           
+          // Set AR mode flag
+          this.isARMode = (mode === 'immersive-ar');
+          
           // Request XR session with required features
           const sessionInit = {
             requiredFeatures: ['local'],
@@ -1176,16 +1259,39 @@
           const referenceSpace = await session.requestReferenceSpace('local');
           this.xrReferenceSpace = referenceSpace;
           
+          // Configure controls based on AR or VR mode
+          if (this.isARMode) {
+            console.log('AR Mode - Setting up gaze controls');
+            // AR mode - use gaze pointer from HMD
+            this.camera.add(this.gazePointer);
+            this.gazePointer.visible = true;
+            
+            // Hide hand controller beams
+            this.beam1.visible = false;
+            this.beam2.visible = false;
+            
+            // Add tap/click listener for AR selection
+            session.addEventListener('select', (event) => {
+              this.onARGazeSelect();
+            });
+          } else {
+            console.log('VR Mode - Using hand controllers');
+            // VR mode - use hand controllers
+            this.gazePointer.visible = false;
+            this.beam1.visible = true;
+            this.beam2.visible = true;
+          }
+          
           // Update button
           const vrButton = document.getElementById('vr-button');
           vrButton.textContent = mode === 'immersive-ar' ? 'EXIT AR' : 'EXIT VR';
           vrButton.onclick = () => this.endXRSession();
           
-          // Hide regular controls in VR
+          // Hide regular controls in VR/AR
           document.getElementById('controls').style.display = 'none';
           document.getElementById('hud').style.display = 'none';
           
-          // Position camera for VR
+          // Position camera for VR/AR
           this.camera.position.set(0, 1.6, 0);
           
           // Handle session end
