@@ -999,9 +999,10 @@
         this.controller1 = this.renderer.xr.getController(0);
         this.controller2 = this.renderer.xr.getController(1);
         
-        // Controllers should be in scene for proper tracking
-        this.scene.add(this.controller1);
-        this.scene.add(this.controller2);
+        // Add controllers to camera rig so they move with player position
+        // This ensures beams start from where the player/camera is, not world origin
+        this.cameraRig.add(this.controller1);
+        this.cameraRig.add(this.controller2);
         
         // Create hand controller beams for VR mode
         const beamGeometry = new THREE.CylinderGeometry(0.01, 0.05, 10, 8);
@@ -1113,14 +1114,9 @@
         if (intersects.length > 0) {
           const point = intersects[0].point;
           
-          // Move the camera rig to the teleport location
-          if (this.cameraRig) {
-            this.cameraRig.position.x = point.x;
-            this.cameraRig.position.z = point.z;
-          } else {
-            this.camera.position.x = point.x;
-            this.camera.position.z = point.z;
-          }
+          // Always move the camera rig to maintain proper player position
+          this.cameraRig.position.x = point.x;
+          this.cameraRig.position.z = point.z;
           
           // Visual feedback
           this.teleportMarker.position.copy(point);
