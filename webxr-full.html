@@ -254,48 +254,107 @@
         // Initialize Web Audio API
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         
-        // Create analyzer
+        // Create analyzer with higher resolution
         this.analyzer = this.audioContext.createAnalyser();
-        this.analyzer.fftSize = 256;
+        this.analyzer.fftSize = 512;
+        this.analyzer.smoothingTimeConstant = 0.8;
         this.analyzer.connect(this.audioContext.destination);
         
-        // Create master gain
+        // Create master gain with compressor
+        this.compressor = this.audioContext.createDynamicsCompressor();
+        this.compressor.threshold.value = -24;
+        this.compressor.knee.value = 30;
+        this.compressor.ratio.value = 12;
+        this.compressor.attack.value = 0.003;
+        this.compressor.release.value = 0.25;
+        this.compressor.connect(this.analyzer);
+        
         this.masterGain = this.audioContext.createGain();
-        this.masterGain.gain.value = 0.5;
-        this.masterGain.connect(this.analyzer);
+        this.masterGain.gain.value = 0.7;
+        this.masterGain.connect(this.compressor);
         
-        // Create convolver for reverb
+        // Create high-quality reverb
         this.convolver = this.audioContext.createConvolver();
-        this.convolver.connect(this.masterGain);
+        this.reverbGain = this.audioContext.createGain();
+        this.reverbGain.gain.value = 0.4;
+        this.convolver.connect(this.reverbGain);
+        this.reverbGain.connect(this.masterGain);
         
-        // Create simple reverb impulse
-        const length = this.audioContext.sampleRate * 2;
+        // Generate better reverb impulse
+        const length = this.audioContext.sampleRate * 3;
         const impulse = this.audioContext.createBuffer(2, length, this.audioContext.sampleRate);
         for (let channel = 0; channel < 2; channel++) {
           const channelData = impulse.getChannelData(channel);
           for (let i = 0; i < length; i++) {
-            channelData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2);
+            const decay = Math.pow(1 - i / length, 1.5);
+            channelData[i] = (Math.random() * 2 - 1) * decay;
+            // Add early reflections
+            if (i < 1000) {
+              channelData[i] *= 0.3;
+            }
           }
         }
         this.convolver.buffer = impulse;
         
-        // Create delay
-        this.delay = this.audioContext.createDelay(1.0);
-        this.delay.delayTime.value = 0.3;
-        this.delayGain = this.audioContext.createGain();
-        this.delayGain.gain.value = 0.3;
-        this.delay.connect(this.delayGain);
-        this.delayGain.connect(this.delay);
-        this.delay.connect(this.masterGain);
+        // Create ping-pong delay
+        this.delayLeft = this.audioContext.createDelay(1.0);
+        this.delayRight = this.audioContext.createDelay(1.0);
+        this.delayLeft.delayTime.value = 0.25;
+        this.delayRight.delayTime.value = 0.375;
         
-        // Create filter
+        this.delayGainLeft = this.audioContext.createGain();
+        this.delayGainRight = this.audioContext.createGain();
+        this.delayGainLeft.gain.value = 0.4;
+        this.delayGainRight.gain.value = 0.4;
+        
+        // Cross-connect delays for ping-pong effect
+        this.delayLeft.connect(this.delayGainLeft);
+        this.delayGainLeft.connect(this.delayRight);
+        this.delayRight.connect(this.delayGainRight);
+        this.delayGainRight.connect(this.delayLeft);
+        
+        this.delayGainLeft.connect(this.masterGain);
+        this.delayGainRight.connect(this.masterGain);
+        
+        // Create filter with LFO modulation
         this.filter = this.audioContext.createBiquadFilter();
         this.filter.type = 'lowpass';
         this.filter.frequency.value = 2000;
-        this.filter.Q.value = 1;
+        this.filter.Q.value = 5;
         this.filter.connect(this.masterGain);
         
+        // Create LFO for filter modulation
+        this.lfo = this.audioContext.createOscillator();
+        this.lfoGain = this.audioContext.createGain();
+        this.lfo.frequency.value = 0.5;
+        this.lfoGain.gain.value = 800;
+        this.lfo.connect(this.lfoGain);
+        this.lfoGain.connect(this.filter.frequency);
+        this.lfo.start();
+        
+        // Create distortion using waveshaper
+        this.distortion = this.audioContext.createWaveShaper();
+        this.distortion.curve = this.makeDistortionCurve(20);
+        this.distortion.oversample = '4x';
+        this.distortionGain = this.audioContext.createGain();
+        this.distortionGain.gain.value = 0.2;
+        this.distortion.connect(this.distortionGain);
+        this.distortionGain.connect(this.masterGain);
+        
         this.setupSequences();
+      }
+      
+      makeDistortionCurve(amount) {
+        const samples = 44100;
+        const curve = new Float32Array(samples);
+        const deg = Math.PI / 180;
+        
+        for (let i = 0; i < samples; i++) {
+          const x = (i * 2) / samples - 1;
+          curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
+        }
+        
+        return curve;
       }
       
       setupSequences() {
@@ -375,26 +434,55 @@
         const osc = this.audioContext.createOscillator();
         const gain = this.audioContext.createGain();
         
+        // Add some detune for richness
         osc.type = type;
         osc.frequency.value = frequency;
+        osc.detune.value = Math.random() * 10 - 5;
         
+        // Better envelope
         gain.gain.setValueAtTime(0, now);
-        gain.gain.linearRampToValueAtTime(0.3, now + 0.01);
+        gain.gain.linearRampToValueAtTime(0.4, now + 0.01);
         gain.gain.exponentialRampToValueAtTime(0.01, now + duration);
         
         osc.connect(gain);
         
         // Route through effects based on type
         if (type === 'sawtooth') {
+          // Bass through filter and distortion
           gain.connect(this.filter);
+          gain.connect(this.distortion);
         } else if (type === 'square') {
-          gain.connect(this.delay);
+          // Lead through delay
+          gain.connect(this.delayLeft);
+          gain.connect(this.masterGain);
         } else {
+          // Pads through reverb
           gain.connect(this.convolver);
+          gain.connect(this.masterGain);
         }
         
         osc.start(now);
         osc.stop(now + duration);
+        
+        // Add a second oscillator for richness
+        if (type === 'sine' || type === 'sawtooth') {
+          const osc2 = this.audioContext.createOscillator();
+          const gain2 = this.audioContext.createGain();
+          
+          osc2.type = type;
+          osc2.frequency.value = frequency * 1.01; // Slight detune
+          osc2.detune.value = 7;
+          
+          gain2.gain.setValueAtTime(0, now);
+          gain2.gain.linearRampToValueAtTime(0.2, now + 0.02);
+          gain2.gain.exponentialRampToValueAtTime(0.01, now + duration);
+          
+          osc2.connect(gain2);
+          gain2.connect(this.masterGain);
+          
+          osc2.start(now);
+          osc2.stop(now + duration);
+        }
       }
       
       playStep() {
@@ -821,64 +909,109 @@
       }
       
       setupXR() {
-        // Check for WebXR support
+        // Check for WebXR support - prefer AR for Rokid glasses
         if ('xr' in navigator) {
           console.log('WebXR is available');
           
-          // Check VR support
-          navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
-            console.log('VR supported:', supported);
-            
-            if (supported) {
-              // Create custom VR button
+          // Check AR first (better for Rokid Max 2)
+          navigator.xr.isSessionSupported('immersive-ar').then((arSupported) => {
+            if (arSupported) {
+              console.log('AR supported - using AR mode');
               const vrButton = document.getElementById('vr-button');
               vrButton.classList.remove('hidden');
-              vrButton.addEventListener('click', () => this.startXRSession('immersive-vr'));
-              document.getElementById('xr-status').textContent = 'VR READY';
-            } else {
-              // Check for inline XR support as fallback
-              navigator.xr.isSessionSupported('inline').then((inlineSupported) => {
-                if (inlineSupported) {
-                  console.log('Inline XR supported');
-                  document.getElementById('xr-status').textContent = 'INLINE XR';
-                } else {
-                  document.getElementById('xr-status').textContent = 'VR NOT SUPPORTED';
-                }
-              });
-            }
-          }).catch(error => {
-            console.error('Error checking VR support:', error);
-            document.getElementById('xr-status').textContent = 'VR CHECK FAILED';
-          });
-          
-          // Check AR support
-          navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
-            console.log('AR supported:', supported);
-            if (supported) {
+              vrButton.textContent = 'ENTER AR';
+              vrButton.addEventListener('click', () => this.startXRSession('immersive-ar'));
               document.getElementById('xr-status').textContent = 'AR READY';
-              
-              // Add AR button
-              const arButton = document.createElement('button');
-              arButton.id = 'ar-button';
-              arButton.textContent = 'ENTER AR';
-              arButton.className = 'control-btn';
-              arButton.style.position = 'absolute';
-              arButton.style.bottom = '30px';
-              arButton.style.right = '180px';
-              arButton.onclick = () => this.startXRSession('immersive-ar');
-              document.getElementById('ui-overlay').appendChild(arButton);
+              return;
             }
+            
+            // Fallback to VR if AR not supported
+            navigator.xr.isSessionSupported('immersive-vr').then((vrSupported) => {
+              if (vrSupported) {
+                console.log('VR supported');
+                const vrButton = document.getElementById('vr-button');
+                vrButton.classList.remove('hidden');
+                vrButton.textContent = 'ENTER VR';
+                vrButton.addEventListener('click', () => this.startXRSession('immersive-vr'));
+                document.getElementById('xr-status').textContent = 'VR READY';
+              } else {
+                document.getElementById('xr-status').textContent = 'XR NOT SUPPORTED';
+              }
+            });
           });
         } else {
           console.log('WebXR not available');
           document.getElementById('xr-status').textContent = 'NO XR';
-          
-          // Show message
-          const vrButton = document.getElementById('vr-button');
-          vrButton.classList.remove('hidden');
-          vrButton.textContent = 'XR NOT AVAILABLE';
-          vrButton.disabled = true;
-          vrButton.style.opacity = '0.5';
+        }
+        
+        // Setup XR controllers
+        this.setupXRControllers();
+      }
+      
+      setupXRControllers() {
+        // Create controller grips
+        this.controller1 = this.renderer.xr.getController(0);
+        this.controller2 = this.renderer.xr.getController(1);
+        
+        this.scene.add(this.controller1);
+        this.scene.add(this.controller2);
+        
+        // Create beam/ray for pointing
+        const geometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, 0, 0),
+          new THREE.Vector3(0, 0, -5)
+        ]);
+        
+        const beamMaterial = new THREE.LineBasicMaterial({
+          color: 0x00ffff,
+          linewidth: 2,
+          transparent: true,
+          opacity: 0.8
+        });
+        
+        this.beam1 = new THREE.Line(geometry, beamMaterial);
+        this.beam2 = new THREE.Line(geometry, beamMaterial.clone());
+        
+        this.controller1.add(this.beam1);
+        this.controller2.add(this.beam2);
+        
+        // Add controller event listeners
+        this.controller1.addEventListener('selectstart', () => this.onSelectStart(this.controller1));
+        this.controller1.addEventListener('selectend', () => this.onSelectEnd(this.controller1));
+        this.controller2.addEventListener('selectstart', () => this.onSelectStart(this.controller2));
+        this.controller2.addEventListener('selectend', () => this.onSelectEnd(this.controller2));
+        
+        // Add grip controllers for hand models
+        const controllerGrip1 = this.renderer.xr.getControllerGrip(0);
+        const controllerGrip2 = this.renderer.xr.getControllerGrip(1);
+        
+        this.scene.add(controllerGrip1);
+        this.scene.add(controllerGrip2);
+      }
+      
+      onSelectStart(controller) {
+        // Trigger audio or visual change on controller select
+        if (!this.audio.isPlaying) {
+          this.audio.start();
+          document.getElementById('play-btn').textContent = 'STOP';
+        } else {
+          this.audio.changeMode();
+        }
+        
+        // Visual feedback
+        const beam = controller === this.controller1 ? this.beam1 : this.beam2;
+        if (beam && beam.material) {
+          beam.material.color.setHex(0xff00ff);
+          beam.material.opacity = 1.0;
+        }
+      }
+      
+      onSelectEnd(controller) {
+        // Reset beam color
+        const beam = controller === this.controller1 ? this.beam1 : this.beam2;
+        if (beam && beam.material) {
+          beam.material.color.setHex(0x00ffff);
+          beam.material.opacity = 0.8;
         }
       }
       
@@ -906,7 +1039,7 @@
           
           // Update button
           const vrButton = document.getElementById('vr-button');
-          vrButton.textContent = 'EXIT VR';
+          vrButton.textContent = mode === 'immersive-ar' ? 'EXIT AR' : 'EXIT VR';
           vrButton.onclick = () => this.endXRSession();
           
           // Hide regular controls in VR
