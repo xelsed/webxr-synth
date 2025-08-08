@@ -63,11 +63,6 @@
       transform: scale(0.95);
     }
     
-    #xr-button {
-      background: rgba(102, 126, 234, 0.8);
-      border: 2px solid rgba(255, 255, 255, 0.5);
-    }
-    
     #loading {
       position: absolute;
       top: 50%;
@@ -87,21 +82,20 @@
       50% { opacity: 0.5; }
     }
   </style>
-  <script type="module" crossorigin src="/webxr-synth/assets/index-iYEQAffV.js"></script>
+  <script type="module" crossorigin src="/webxr-synth/assets/index-rjNXbY9J.js"></script>
 </head>
 <body>
   <div id="app">
     <div id="info">
       <div>WebXR Audio Synthesizer</div>
       <div>FPS: <span id="fps">60</span></div>
-      <div>BPM: <span id="bpm">120</span></div>
+      <div>Status: <span id="status">Ready</span></div>
     </div>
     
     <div id="loading" class="pulse">Initializing...</div>
     
-    <div id="controls">
-      <button id="play-button">Play/Pause</button>
-      <button id="xr-button">Enter XR</button>
+    <div id="controls" style="display: none;">
+      <button id="play-button">Play</button>
       <button id="mode-button">Change Mode</button>
       <button id="reset-button">Reset</button>
     </div>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebXR Synthesizer - Simple</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 10px;
+      border-radius: 5px;
+      z-index: 100;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 25px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+  </style>
+</head>
+<body>
+  <div id="info">
+    <h3>WebXR Synthesizer</h3>
+    <div id="status">Loading...</div>
+    <button onclick="startAudio()">Start Audio</button>
+    <button onclick="stopAudio()">Stop Audio</button>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js';
+    import * as Tone from 'https://cdn.jsdelivr.net/npm/tone@15.0.4/build/Tone.js';
+    
+    let scene, camera, renderer, cube;
+    let synth, isPlaying = false;
+    
+    function updateStatus(msg) {
+      document.getElementById('status').textContent = msg;
+      console.log(msg);
+    }
+    
+    // Initialize graphics
+    try {
+      updateStatus('Creating scene...');
+      
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      document.body.appendChild(renderer.domElement);
+      
+      // Add a simple cube
+      const geometry = new THREE.BoxGeometry();
+      const material = new THREE.MeshBasicMaterial({ 
+        color: 0x00ff00,
+        wireframe: true 
+      });
+      cube = new THREE.Mesh(geometry, material);
+      scene.add(cube);
+      
+      // Add lights
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(5, 5, 5);
+      scene.add(light);
+      
+      camera.position.z = 5;
+      
+      updateStatus('Scene ready! Click "Start Audio" to play.');
+      
+      // Animation loop
+      function animate() {
+        requestAnimationFrame(animate);
+        
+        if (cube) {
+          cube.rotation.x += 0.01;
+          cube.rotation.y += 0.01;
+          
+          // Pulse with audio if playing
+          if (isPlaying) {
+            const scale = 1 + Math.sin(Date.now() * 0.001) * 0.2;
+            cube.scale.set(scale, scale, scale);
+          }
+        }
+        
+        renderer.render(scene, camera);
+      }
+      
+      animate();
+      
+    } catch (error) {
+      updateStatus('Graphics Error: ' + error.message);
+      console.error(error);
+    }
+    
+    // Audio functions
+    window.startAudio = async function() {
+      try {
+        updateStatus('Starting audio...');
+        
+        if (!synth) {
+          await Tone.start();
+          synth = new Tone.Synth().toDestination();
+        }
+        
+        // Play a simple pattern
+        const pattern = new Tone.Pattern((time, note) => {
+          synth.triggerAttackRelease(note, '8n', time);
+        }, ['C4', 'E4', 'G4', 'C5'], 'up');
+        
+        pattern.start(0);
+        Tone.Transport.start();
+        
+        isPlaying = true;
+        updateStatus('Audio playing!');
+        
+      } catch (error) {
+        updateStatus('Audio Error: ' + error.message);
+        console.error(error);
+      }
+    };
+    
+    window.stopAudio = function() {
+      try {
+        Tone.Transport.stop();
+        isPlaying = false;
+        updateStatus('Audio stopped');
+      } catch (error) {
+        updateStatus('Stop Error: ' + error.message);
+      }
+    };
+    
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
