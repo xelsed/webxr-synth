@@ -60,8 +60,8 @@ export class SceneSetup {
     directionalLight.shadow.camera.right = 10;
     directionalLight.shadow.camera.top = 10;
     directionalLight.shadow.camera.bottom = -10;
-    directionalLight.shadow.mapSize.width = 2048;
-    directionalLight.shadow.mapSize.height = 2048;
+    directionalLight.shadow.mapSize.width = 1024; // Reduced from 2048
+    directionalLight.shadow.mapSize.height = 1024; // Better for mobile GPUs
     this.scene.add(directionalLight);
     this.lights.push(directionalLight);
     
@@ -99,7 +99,7 @@ export class SceneSetup {
   
   createStarField() {
     const starsGeometry = new THREE.BufferGeometry();
-    const starCount = 5000;
+    const starCount = 500; // Reduced from 5000 for performance
     const positions = new Float32Array(starCount * 3);
     const colors = new Float32Array(starCount * 3);
     
@@ -112,8 +112,11 @@ export class SceneSetup {
       positions[i + 1] = radius * Math.sin(phi) * Math.sin(theta);
       positions[i + 2] = radius * Math.cos(phi);
       
-      const color = new THREE.Color();
-      color.setHSL(Math.random() * 0.2 + 0.5, 0.5, 0.5 + Math.random() * 0.5);
+      // Direct HSL calculation without Color object
+      const hue = Math.random() * 0.2 + 0.5;
+      const lightness = 0.5 + Math.random() * 0.5;
+      // Simple HSL to RGB for stars (blueish tint)
+      const color = new THREE.Color().setHSL(hue, 0.5, lightness);
       colors[i] = color.r;
       colors[i + 1] = color.g;
       colors[i + 2] = color.b;

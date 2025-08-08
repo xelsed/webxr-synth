@@ -16,7 +16,7 @@ export class OrbVisualizer {
   }
   
   createOrb() {
-    const geometry = new THREE.IcosahedronGeometry(1, 4);
+    const geometry = new THREE.IcosahedronGeometry(1, 3); // Reduced from 4 for performance
     
     const vertexShader = `
       uniform float time;

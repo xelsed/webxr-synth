@@ -3,10 +3,13 @@ import * as THREE from 'three';
 export class ParticleSystem {
   constructor(scene) {
     this.scene = scene;
-    this.particleCount = 200; // Reduced from 1000 for performance
+    this.particleCount = 500; // Reduced from 1000
     this.particles = null;
     this.particleGroup = new THREE.Group();
     this.time = 0;
+    
+    // Pre-allocate reusable color object
+    this.tempColor = new THREE.Color();
     
     this.createParticles();
     this.scene.add(this.particleGroup);
@@ -34,12 +37,12 @@ export class ParticleSystem {
       velocities[i3 + 1] = Math.random() * 0.02;
       velocities[i3 + 2] = (Math.random() - 0.5) * 0.02;
       
-      // Use temporary color to avoid creating objects in loop
+      // Direct HSL to RGB conversion without creating Color object
       const hue = Math.random();
-      const color = new THREE.Color().setHSL(hue, 1, 0.5);
-      colors[i3] = color.r;
-      colors[i3 + 1] = color.g;
-      colors[i3 + 2] = color.b;
+      this.tempColor.setHSL(hue, 1, 0.5);
+      colors[i3] = this.tempColor.r;
+      colors[i3 + 1] = this.tempColor.g;
+      colors[i3 + 2] = this.tempColor.b;
       
       sizes[i] = Math.random() * 0.1 + 0.05;
     }
@@ -49,17 +52,13 @@ export class ParticleSystem {
     geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
     
     this.velocities = velocities;
-    this.initialPositions = new Float32Array(positions);
     
     const vertexShader = `
       attribute float size;
       varying vec3 vColor;
-      varying float vSize;
       
       void main() {
         vColor = color;
-        vSize = size;
-        
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
         gl_PointSize = size * 300.0 / -mvPosition.z;
         gl_Position = projectionMatrix * mvPosition;
@@ -69,7 +68,6 @@ export class ParticleSystem {
     const fragmentShader = `
       uniform float audioLevel;
       varying vec3 vColor;
-      varying float vSize;
       
       void main() {
         vec2 center = gl_PointCoord - vec2(0.5);
@@ -81,7 +79,6 @@ export class ParticleSystem {
         alpha *= 0.5 + audioLevel * 0.5;
         
         vec3 finalColor = vColor * (1.0 + audioLevel);
-        
         gl_FragColor = vec4(finalColor, alpha);
       }
     `;
@@ -108,7 +105,7 @@ export class ParticleSystem {
     this.emitters = [];
     
     for (let i = 0; i < 3; i++) {
-      const emitterGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+      const emitterGeometry = new THREE.SphereGeometry(0.1, 6, 6); // Reduced from 8,8
       const emitterMaterial = new THREE.MeshBasicMaterial({
         color: new THREE.Color().setHSL(i / 3, 1, 0.5),
         transparent: true,
@@ -145,7 +142,10 @@ export class ParticleSystem {
     const colors = this.particles.geometry.attributes.color.array;
     const sizes = this.particles.geometry.attributes.size.array;
     
-    for (let i = 0; i < this.particleCount; i++) {
+    // Update only every 2nd particle when performance is needed
+    const step = audioLevel < 0.3 ? 2 : 1;
+    
+    for (let i = 0; i < this.particleCount; i += step) {
       const i3 = i * 3;
       
       positions[i3] += this.velocities[i3] + Math.sin(this.time + i) * 0.001;
@@ -170,13 +170,12 @@ export class ParticleSystem {
         this.velocities[i3 + 2] = (Math.random() - 0.5) * 0.02;
       }
       
-      // Directly calculate RGB values without creating new Color object
+      // Reuse the same color object
       const hue = (this.time * 0.1 + i * 0.001) % 1;
-      const lightness = 0.5 + audioLevel * 0.5;
-      // Simple HSL to RGB approximation for performance
-      colors[i3] = hue;
-      colors[i3 + 1] = lightness;
-      colors[i3 + 2] = 0.5 + audioLevel * 0.3;
+      this.tempColor.setHSL(hue, 1, 0.5 + audioLevel * 0.5);
+      colors[i3] = this.tempColor.r;
+      colors[i3 + 1] = this.tempColor.g;
+      colors[i3 + 2] = this.tempColor.b;
       
       sizes[i] = (0.05 + Math.sin(this.time * 2 + i) * 0.02) * (1 + audioLevel);
     }
@@ -198,7 +197,7 @@ export class ParticleSystem {
     });
   }
   
-  burst(position, count = 50) {
+  burst(position, count = 25) { // Reduced from 50
     const positions = this.particles.geometry.attributes.position.array;
     
     for (let i = 0; i < Math.min(count, this.particleCount); i++) {
