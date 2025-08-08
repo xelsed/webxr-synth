@@ -995,10 +995,11 @@
         // The gaze pointer will be added to camera in AR mode
         this.gazePointer.visible = false;
         
-        // Still create hand controllers for VR mode
+        // Create controllers (Station 2 controller or VR hand controllers)
         this.controller1 = this.renderer.xr.getController(0);
         this.controller2 = this.renderer.xr.getController(1);
         
+        // Controllers should be in scene for proper tracking
         this.scene.add(this.controller1);
         this.scene.add(this.controller2);
         
@@ -1044,18 +1045,38 @@
         this.controller2.addEventListener('selectend', () => this.onSelectEnd(this.controller2));
         this.controller2.addEventListener('squeeze', () => this.onTeleport(this.controller2));
         
-        // Add thumbstick/touchpad movement
+        // Add thumbstick/touchpad movement and controller detection
         this.controller1.addEventListener('connected', (event) => {
+          console.log('Controller 1 connected:', event.data);
           if (event.data.gamepad) {
             this.gamepad1 = event.data.gamepad;
           }
+          // Show beam only when controller is connected
+          this.beam1.visible = true;
+        });
+        
+        this.controller1.addEventListener('disconnected', () => {
+          console.log('Controller 1 disconnected');
+          this.beam1.visible = false;
         });
         
         this.controller2.addEventListener('connected', (event) => {
+          console.log('Controller 2 connected:', event.data);
           if (event.data.gamepad) {
             this.gamepad2 = event.data.gamepad;
           }
+          // Show beam only when controller is connected
+          this.beam2.visible = true;
         });
+        
+        this.controller2.addEventListener('disconnected', () => {
+          console.log('Controller 2 disconnected');
+          this.beam2.visible = false;
+        });
+        
+        // Start with beams hidden until controllers connect
+        this.beam1.visible = false;
+        this.beam2.visible = false;
         
         // Add grip controllers
         const controllerGrip1 = this.renderer.xr.getControllerGrip(0);
@@ -1259,28 +1280,20 @@
           const referenceSpace = await session.requestReferenceSpace('local');
           this.xrReferenceSpace = referenceSpace;
           
-          // Configure controls based on AR or VR mode
-          if (this.isARMode) {
-            console.log('AR Mode - Setting up gaze controls');
-            // AR mode - use gaze pointer from HMD
-            this.camera.add(this.gazePointer);
-            this.gazePointer.visible = true;
-            
-            // Hide hand controller beams
-            this.beam1.visible = false;
-            this.beam2.visible = false;
-            
-            // Add tap/click listener for AR selection
-            session.addEventListener('select', (event) => {
+          // Configure controls - Station 2 controller works for both AR and VR
+          console.log(`${mode} mode - Setting up controllers`);
+          
+          // The Station 2 controller should work the same in AR or VR
+          // Controllers will become visible when they connect (see connected event)
+          
+          // Add select listener for both modes
+          session.addEventListener('select', (event) => {
+            console.log('XR Select event from input source');
+            // This handles Station 2 controller select button
+            if (this.isARMode) {
               this.onARGazeSelect();
-            });
-          } else {
-            console.log('VR Mode - Using hand controllers');
-            // VR mode - use hand controllers
-            this.gazePointer.visible = false;
-            this.beam1.visible = true;
-            this.beam2.visible = true;
-          }
+            }
+          });
           
           // Update button
           const vrButton = document.getElementById('vr-button');
