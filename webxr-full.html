@@ -185,7 +185,6 @@
 
   <script type="module">
     import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-    import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js';
     
     // Euclidean Rhythm Generator
     class EuclideanRhythm {
@@ -713,8 +712,8 @@
         const innerOrb = new THREE.Mesh(innerGeometry, innerMaterial);
         this.objects.orb.add(innerOrb);
         
-        // Particle system
-        const particleCount = 5000;
+        // Particle system (reduced for performance)
+        const particleCount = 2500;
         const particleGeometry = new THREE.BufferGeometry();
         const particlePositions = new Float32Array(particleCount * 3);
         const particleColors = new Float32Array(particleCount * 3);
@@ -787,9 +786,9 @@
         this.objects.particles = new THREE.Points(particleGeometry, particleMaterial);
         this.scene.add(this.objects.particles);
         
-        // Frequency bars (circular arrangement)
-        const barCount = 32;
-        const barGeometry = new THREE.BoxGeometry(0.1, 1, 0.1);
+        // Frequency bars (circular arrangement - reduced to 16)
+        const barCount = 16;
+        const barGeometry = new THREE.BoxGeometry(0.2, 1, 0.2);
         
         for (let i = 0; i < barCount; i++) {
           const angle = (i / barCount) * Math.PI * 2;
@@ -817,25 +816,75 @@
       setupXR() {
         // Check for WebXR support
         if ('xr' in navigator) {
+          // Check VR support
           navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
             if (supported) {
-              const vrButton = VRButton.createButton(this.renderer);
-              document.body.appendChild(vrButton);
-              document.getElementById('vr-button').classList.add('hidden');
+              // Create custom VR button
+              const vrButton = document.getElementById('vr-button');
+              vrButton.classList.remove('hidden');
+              vrButton.addEventListener('click', () => this.startXRSession('immersive-vr'));
               document.getElementById('xr-status').textContent = 'VR READY';
             } else {
               document.getElementById('xr-status').textContent = 'VR NOT SUPPORTED';
             }
           });
           
-          // Check for AR support
+          // Check AR support
           navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
             if (supported) {
               document.getElementById('xr-status').textContent = 'AR READY';
+              // Could add AR button here if needed
             }
           });
         } else {
           document.getElementById('xr-status').textContent = 'NO XR';
+        }
+      }
+      
+      async startXRSession(mode) {
+        try {
+          // Request XR session
+          const session = await navigator.xr.requestSession(mode, {
+            optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
+          });
+          
+          this.xrSession = session;
+          
+          // Setup XR renderer
+          await this.renderer.xr.setSession(session);
+          this.renderer.xr.enabled = true;
+          
+          // Get reference space
+          this.xrReferenceSpace = await session.requestReferenceSpace('local-floor');
+          
+          // Update button
+          const vrButton = document.getElementById('vr-button');
+          vrButton.textContent = 'EXIT VR';
+          vrButton.onclick = () => this.endXRSession();
+          
+          // Hide regular controls in VR
+          document.getElementById('controls').style.display = 'none';
+          document.getElementById('hud').style.display = 'none';
+          
+          // Handle session end
+          session.addEventListener('end', () => {
+            this.xrSession = null;
+            vrButton.textContent = 'ENTER VR';
+            vrButton.onclick = () => this.startXRSession('immersive-vr');
+            document.getElementById('controls').style.display = 'flex';
+            document.getElementById('hud').style.display = 'block';
+            this.renderer.xr.enabled = false;
+          });
+          
+        } catch (error) {
+          console.error('Failed to start XR session:', error);
+          document.getElementById('xr-status').textContent = 'XR ERROR';
+        }
+      }
+      
+      endXRSession() {
+        if (this.xrSession) {
+          this.xrSession.end();
         }
       }
       
