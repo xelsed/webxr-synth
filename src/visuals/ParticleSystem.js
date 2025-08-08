@@ -170,13 +170,34 @@ export class ParticleSystem {
         this.velocities[i3 + 2] = (Math.random() - 0.5) * 0.02;
       }
       
-      // Directly calculate RGB values without creating new Color object
+      // Update colors with proper RGB values
       const hue = (this.time * 0.1 + i * 0.001) % 1;
+      const saturation = 1;
       const lightness = 0.5 + audioLevel * 0.5;
-      // Simple HSL to RGB approximation for performance
-      colors[i3] = hue;
-      colors[i3 + 1] = lightness;
-      colors[i3 + 2] = 0.5 + audioLevel * 0.3;
+      
+      // Convert HSL to RGB (simplified for performance)
+      const c = (1 - Math.abs(2 * lightness - 1)) * saturation;
+      const x = c * (1 - Math.abs((hue * 6) % 2 - 1));
+      const m = lightness - c / 2;
+      
+      let r, g, b;
+      if (hue < 1/6) {
+        r = c; g = x; b = 0;
+      } else if (hue < 2/6) {
+        r = x; g = c; b = 0;
+      } else if (hue < 3/6) {
+        r = 0; g = c; b = x;
+      } else if (hue < 4/6) {
+        r = 0; g = x; b = c;
+      } else if (hue < 5/6) {
+        r = x; g = 0; b = c;
+      } else {
+        r = c; g = 0; b = x;
+      }
+      
+      colors[i3] = r + m;
+      colors[i3 + 1] = g + m;
+      colors[i3 + 2] = b + m;
       
       sizes[i] = (0.05 + Math.sin(this.time * 2 + i) * 0.02) * (1 + audioLevel);
     }
