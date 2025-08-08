@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebXR Audio Synthesizer</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: 'Arial', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    
+    #app {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+    }
+    
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 10px;
+      border-radius: 5px;
+      font-size: 14px;
+      z-index: 100;
+    }
+    
+    #controls {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      z-index: 100;
+    }
+    
+    button {
+      padding: 10px 20px;
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 25px;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+      transition: all 0.3s;
+      font-size: 14px;
+      font-weight: bold;
+    }
+    
+    button:hover {
+      background: rgba(255, 255, 255, 0.3);
+      transform: scale(1.05);
+    }
+    
+    button:active {
+      transform: scale(0.95);
+    }
+    
+    #xr-button {
+      background: rgba(102, 126, 234, 0.8);
+      border: 2px solid rgba(255, 255, 255, 0.5);
+    }
+    
+    #loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: white;
+      font-size: 24px;
+      text-align: center;
+    }
+    
+    .pulse {
+      animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+  </style>
+  <script type="module" crossorigin src="/assets/index--E-HGp2W.js"></script>
+</head>
+<body>
+  <div id="app">
+    <div id="info">
+      <div>WebXR Audio Synthesizer</div>
+      <div>FPS: <span id="fps">60</span></div>
+      <div>BPM: <span id="bpm">120</span></div>
+    </div>
+    
+    <div id="loading" class="pulse">Initializing...</div>
+    
+    <div id="controls">
+      <button id="play-button">Play/Pause</button>
+      <button id="xr-button">Enter XR</button>
+      <button id="mode-button">Change Mode</button>
+      <button id="reset-button">Reset</button>
+    </div>
+  </div>
+  
+</body>
+</html>
