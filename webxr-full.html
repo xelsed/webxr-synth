@@ -679,14 +679,22 @@
         this.scene = new THREE.Scene();
         this.scene.fog = new THREE.FogExp2(0x000033, 0.02);
         
+        // Create camera rig for VR movement
+        this.cameraRig = new THREE.Group();
+        this.cameraRig.position.set(0, 0, 5); // Start further back
+        this.scene.add(this.cameraRig);
+        
         this.camera = new THREE.PerspectiveCamera(
           75,
           window.innerWidth / window.innerHeight,
           0.1,
           1000
         );
-        this.camera.position.set(0, 1.6, 3);
-        this.camera.lookAt(0, 0, 0);
+        this.camera.position.set(0, 1.6, 0); // Eye height relative to rig
+        this.cameraRig.add(this.camera);
+        
+        // Add zoom controls for non-VR mode
+        this.cameraDistance = 5;
       }
       
       setupLights() {
@@ -722,7 +730,7 @@
       }
       
       createEnvironment() {
-        // Create floor
+        // Create floor with name for teleport targeting
         const floorGeometry = new THREE.PlaneGeometry(50, 50);
         const floorMaterial = new THREE.MeshStandardMaterial({
           color: 0x111111,
@@ -732,6 +740,7 @@
         const floor = new THREE.Mesh(floorGeometry, floorMaterial);
         floor.rotation.x = -Math.PI / 2;
         floor.receiveShadow = true;
+        floor.name = 'floor'; // Name for teleport raycasting
         this.scene.add(floor);
         
         // Create grid
@@ -956,37 +965,112 @@
         this.scene.add(this.controller1);
         this.scene.add(this.controller2);
         
-        // Create beam/ray for pointing
-        const geometry = new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(0, 0, 0),
-          new THREE.Vector3(0, 0, -5)
-        ]);
+        // Create teleport/movement beam
+        const beamGeometry = new THREE.CylinderGeometry(0.01, 0.05, 10, 8);
+        beamGeometry.translate(0, -5, 0);
+        beamGeometry.rotateX(-Math.PI / 2);
         
-        const beamMaterial = new THREE.LineBasicMaterial({
+        const beamMaterial = new THREE.MeshBasicMaterial({
           color: 0x00ffff,
-          linewidth: 2,
           transparent: true,
-          opacity: 0.8
+          opacity: 0.6,
+          emissive: 0x00ffff,
+          emissiveIntensity: 0.5
         });
         
-        this.beam1 = new THREE.Line(geometry, beamMaterial);
-        this.beam2 = new THREE.Line(geometry, beamMaterial.clone());
+        this.beam1 = new THREE.Mesh(beamGeometry, beamMaterial);
+        this.beam2 = new THREE.Mesh(beamGeometry.clone(), beamMaterial.clone());
         
         this.controller1.add(this.beam1);
         this.controller2.add(this.beam2);
         
-        // Add controller event listeners
+        // Add teleport markers
+        const markerGeometry = new THREE.RingGeometry(0.2, 0.3, 32);
+        const markerMaterial = new THREE.MeshBasicMaterial({
+          color: 0x00ff00,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.8
+        });
+        
+        this.teleportMarker = new THREE.Mesh(markerGeometry, markerMaterial);
+        this.teleportMarker.rotation.x = -Math.PI / 2;
+        this.teleportMarker.visible = false;
+        this.scene.add(this.teleportMarker);
+        
+        // Controller event listeners with movement
         this.controller1.addEventListener('selectstart', () => this.onSelectStart(this.controller1));
         this.controller1.addEventListener('selectend', () => this.onSelectEnd(this.controller1));
+        this.controller1.addEventListener('squeeze', () => this.onTeleport(this.controller1));
+        
         this.controller2.addEventListener('selectstart', () => this.onSelectStart(this.controller2));
         this.controller2.addEventListener('selectend', () => this.onSelectEnd(this.controller2));
+        this.controller2.addEventListener('squeeze', () => this.onTeleport(this.controller2));
         
-        // Add grip controllers for hand models
+        // Add thumbstick/touchpad movement
+        this.controller1.addEventListener('connected', (event) => {
+          if (event.data.gamepad) {
+            this.gamepad1 = event.data.gamepad;
+          }
+        });
+        
+        this.controller2.addEventListener('connected', (event) => {
+          if (event.data.gamepad) {
+            this.gamepad2 = event.data.gamepad;
+          }
+        });
+        
+        // Add grip controllers
         const controllerGrip1 = this.renderer.xr.getControllerGrip(0);
         const controllerGrip2 = this.renderer.xr.getControllerGrip(1);
         
+        // Add visual controller models
+        const controllerGeometry = new THREE.BoxGeometry(0.05, 0.05, 0.1);
+        const controllerMaterial = new THREE.MeshPhongMaterial({
+          color: 0x444444,
+          emissive: 0x222222
+        });
+        
+        const controller1Model = new THREE.Mesh(controllerGeometry, controllerMaterial);
+        const controller2Model = new THREE.Mesh(controllerGeometry, controllerMaterial.clone());
+        
+        controllerGrip1.add(controller1Model);
+        controllerGrip2.add(controller2Model);
+        
         this.scene.add(controllerGrip1);
         this.scene.add(controllerGrip2);
+      }
+      
+      onTeleport(controller) {
+        // Teleport to where the beam is pointing
+        const tempMatrix = new THREE.Matrix4();
+        tempMatrix.identity().extractRotation(controller.matrixWorld);
+        
+        const raycaster = new THREE.Raycaster();
+        raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+        
+        const intersects = raycaster.intersectObjects([this.scene.getObjectByProperty('name', 'floor')], false);
+        
+        if (intersects.length > 0) {
+          const point = intersects[0].point;
+          
+          // Move the camera rig to the teleport location
+          if (this.cameraRig) {
+            this.cameraRig.position.x = point.x;
+            this.cameraRig.position.z = point.z;
+          } else {
+            this.camera.position.x = point.x;
+            this.camera.position.z = point.z;
+          }
+          
+          // Visual feedback
+          this.teleportMarker.position.copy(point);
+          this.teleportMarker.visible = true;
+          setTimeout(() => {
+            this.teleportMarker.visible = false;
+          }, 500);
+        }
       }
       
       onSelectStart(controller) {
@@ -1012,6 +1096,61 @@
         if (beam && beam.material) {
           beam.material.color.setHex(0x00ffff);
           beam.material.opacity = 0.8;
+        }
+      }
+      
+      handleVRMovement(deltaTime) {
+        // Handle thumbstick movement if gamepad is available
+        const speed = 3 * deltaTime;
+        const rotSpeed = 1.5 * deltaTime;
+        
+        if (this.gamepad1) {
+          // Left controller - usually movement
+          const axes = this.gamepad1.axes;
+          if (axes.length >= 4) {
+            // Thumbstick X/Y for movement
+            const moveX = axes[2] || 0;
+            const moveZ = axes[3] || 0;
+            
+            if (Math.abs(moveX) > 0.1 || Math.abs(moveZ) > 0.1) {
+              // Get camera direction
+              const cameraDirection = new THREE.Vector3();
+              this.camera.getWorldDirection(cameraDirection);
+              cameraDirection.y = 0;
+              cameraDirection.normalize();
+              
+              // Calculate right vector
+              const rightVector = new THREE.Vector3();
+              rightVector.crossVectors(cameraDirection, new THREE.Vector3(0, 1, 0));
+              
+              // Move camera rig
+              this.cameraRig.position.x += rightVector.x * moveX * speed;
+              this.cameraRig.position.z += rightVector.z * moveX * speed;
+              this.cameraRig.position.x += cameraDirection.x * -moveZ * speed;
+              this.cameraRig.position.z += cameraDirection.z * -moveZ * speed;
+            }
+          }
+        }
+        
+        if (this.gamepad2) {
+          // Right controller - usually rotation
+          const axes = this.gamepad2.axes;
+          if (axes.length >= 4) {
+            // Thumbstick X for rotation
+            const rotateY = axes[2] || 0;
+            
+            if (Math.abs(rotateY) > 0.1) {
+              this.cameraRig.rotation.y -= rotateY * rotSpeed;
+            }
+            
+            // Thumbstick Y for zoom/scale
+            const scaleChange = axes[3] || 0;
+            if (Math.abs(scaleChange) > 0.1) {
+              const scale = this.objects.orb.scale.x + scaleChange * deltaTime;
+              const clampedScale = Math.max(0.5, Math.min(3, scale));
+              this.objects.orb.scale.set(clampedScale, clampedScale, clampedScale);
+            }
+          }
         }
       }
       
@@ -1136,7 +1275,7 @@
           this.renderer.setSize(window.innerWidth, window.innerHeight);
         });
         
-        // Keyboard controls
+        // Keyboard controls with camera movement
         window.addEventListener('keydown', (e) => {
           switch(e.key) {
             case ' ':
@@ -1155,6 +1294,50 @@
             case 'ArrowDown':
               this.audio.changeTempo(-5);
               document.getElementById('bpm').textContent = this.audio.bpm;
+              break;
+            // Camera controls
+            case 'w':
+            case 'W':
+              this.cameraRig.position.z -= 0.5;
+              break;
+            case 's':
+            case 'S':
+              this.cameraRig.position.z += 0.5;
+              break;
+            case 'a':
+            case 'A':
+              this.cameraRig.position.x -= 0.5;
+              break;
+            case 'd':
+            case 'D':
+              this.cameraRig.position.x += 0.5;
+              break;
+            case 'q':
+            case 'Q':
+              this.cameraRig.rotation.y += 0.1;
+              break;
+            case 'e':
+            case 'E':
+              this.cameraRig.rotation.y -= 0.1;
+              break;
+            case 'z':
+            case 'Z':
+              // Zoom in
+              this.cameraDistance = Math.max(2, this.cameraDistance - 0.5);
+              this.cameraRig.position.z = this.cameraDistance;
+              break;
+            case 'x':
+            case 'X':
+              // Zoom out
+              this.cameraDistance = Math.min(10, this.cameraDistance + 0.5);
+              this.cameraRig.position.z = this.cameraDistance;
+              break;
+            case 'r':
+            case 'R':
+              // Reset camera position
+              this.cameraRig.position.set(0, 0, 5);
+              this.cameraRig.rotation.set(0, 0, 0);
+              this.cameraDistance = 5;
               break;
           }
         });
@@ -1187,6 +1370,11 @@
       render(time, frame) {
         const deltaTime = this.clock.getDelta();
         const elapsedTime = this.clock.getElapsedTime();
+        
+        // Handle thumbstick movement in VR
+        if (this.renderer.xr.isPresenting) {
+          this.handleVRMovement(deltaTime);
+        }
         
         // Update FPS only if HUD is visible
         const fpsElement = document.getElementById('fps');
