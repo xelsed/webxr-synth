@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebXR Test</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background: #222;
+      color: white;
+    }
+    #log {
+      background: #333;
+      padding: 10px;
+      border-radius: 5px;
+      margin-top: 10px;
+      min-height: 200px;
+      white-space: pre-wrap;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    .error {
+      color: #ff6b6b;
+    }
+    .success {
+      color: #51cf66;
+    }
+  </style>
+</head>
+<body>
+  <h1>WebXR Synthesizer Debug Test</h1>
+  
+  <div>
+    <button onclick="testThree()">1. Test Three.js</button>
+    <button onclick="testTone()">2. Test Tone.js</button>
+    <button onclick="testWebXR()">3. Test WebXR</button>
+    <button onclick="testFull()">4. Test Full App</button>
+    <button onclick="clearLog()">Clear Log</button>
+  </div>
+  
+  <div id="log"></div>
+  <div id="canvas-container"></div>
+
+  <script type="module">
+    window.log = function(msg, isError = false) {
+      const logDiv = document.getElementById('log');
+      const timestamp = new Date().toLocaleTimeString();
+      const className = isError ? 'error' : 'success';
+      logDiv.innerHTML += `<span class="${className}">[${timestamp}] ${msg}</span>\n`;
+      console.log(msg);
+    };
+
+    window.clearLog = function() {
+      document.getElementById('log').innerHTML = '';
+    };
+
+    window.testThree = async function() {
+      try {
+        log('Loading Three.js...');
+        const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js');
+        log('✓ Three.js loaded');
+        
+        log('Creating scene...');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(300, 300);
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+        
+        const geometry = new THREE.BoxGeometry();
+        const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        const cube = new THREE.Mesh(geometry, material);
+        scene.add(cube);
+        camera.position.z = 5;
+        
+        let frames = 0;
+        function animate() {
+          if (frames++ < 60) {
+            requestAnimationFrame(animate);
+            cube.rotation.x += 0.01;
+            cube.rotation.y += 0.01;
+            renderer.render(scene, camera);
+          } else {
+            log('✓ Three.js working! (60 frames rendered)');
+          }
+        }
+        animate();
+        
+      } catch (error) {
+        log('✗ Three.js Error: ' + error.message, true);
+      }
+    };
+
+    window.testTone = async function() {
+      try {
+        log('Loading Tone.js...');
+        const Tone = await import('https://cdn.jsdelivr.net/npm/tone@15.0.4/build/Tone.js');
+        log('✓ Tone.js loaded');
+        
+        log('Creating synth...');
+        const synth = new Tone.Synth().toDestination();
+        
+        log('Starting audio context...');
+        await Tone.start();
+        log('✓ Audio context started');
+        
+        log('Playing note...');
+        synth.triggerAttackRelease("C4", "8n");
+        log('✓ Tone.js working! (note played)');
+        
+        setTimeout(() => {
+          synth.dispose();
+          log('✓ Synth disposed');
+        }, 1000);
+        
+      } catch (error) {
+        log('✗ Tone.js Error: ' + error.message, true);
+      }
+    };
+
+    window.testWebXR = async function() {
+      try {
+        log('Checking WebXR support...');
+        
+        if (!('xr' in navigator)) {
+          log('✗ WebXR not available in navigator', true);
+          return;
+        }
+        
+        log('✓ WebXR API found');
+        
+        const isVRSupported = await navigator.xr.isSessionSupported('immersive-vr');
+        log(isVRSupported ? '✓ VR supported' : '✗ VR not supported', !isVRSupported);
+        
+        const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
+        log(isARSupported ? '✓ AR supported' : '✗ AR not supported', !isARSupported);
+        
+        log('WebXR check complete');
+        
+      } catch (error) {
+        log('✗ WebXR Error: ' + error.message, true);
+      }
+    };
+
+    window.testFull = async function() {
+      try {
+        log('Testing full app load...');
+        
+        // Test if we can import the modules
+        log('Importing SceneSetup...');
+        const response = await fetch('/webxr-synth/src/scene/SceneSetup.js');
+        if (response.ok) {
+          log('✓ SceneSetup.js accessible');
+        } else {
+          log('✗ SceneSetup.js not found', true);
+        }
+        
+        log('Importing SynthEngine...');
+        const response2 = await fetch('/webxr-synth/src/audio/SynthEngine.js');
+        if (response2.ok) {
+          log('✓ SynthEngine.js accessible');
+        } else {
+          log('✗ SynthEngine.js not found', true);
+        }
+        
+        log('Importing main.js...');
+        const response3 = await fetch('/webxr-synth/src/main.js');
+        if (response3.ok) {
+          log('✓ main.js accessible');
+          const content = await response3.text();
+          const hasClass = content.includes('class WebXRSynth');
+          log(hasClass ? '✓ WebXRSynth class found' : '✗ WebXRSynth class not found', !hasClass);
+        } else {
+          log('✗ main.js not found', true);
+        }
+        
+      } catch (error) {
+        log('✗ Full App Error: ' + error.message, true);
+      }
+    };
+    
+    // Auto-run tests
+    log('Debug test page loaded. Click buttons to test components.');
+  </script>
+</body>
+</html>

@@ -26,16 +26,26 @@ class WebXRSynth {
   
   async init() {
     try {
+      console.log('Initializing WebXR Synth...');
+      
+      // Initialize scene
+      console.log('Creating scene...');
       this.sceneSetup = new SceneSetup();
       
+      // Initialize WebXR
+      console.log('Setting up WebXR...');
       this.xrManager = new WebXRManager(
         this.sceneSetup.renderer,
         this.sceneSetup.scene,
         this.sceneSetup.camera
       );
       
+      // Initialize audio (don't auto-start)
+      console.log('Creating audio engine...');
       this.synthEngine = new SynthEngine();
       
+      // Initialize visualizers
+      console.log('Creating visualizers...');
       this.visualizers.orb = new OrbVisualizer(this.sceneSetup.scene);
       this.visualizers.orb.setPosition(0, 1, 0);
       
@@ -45,18 +55,24 @@ class WebXRSynth {
       this.visualizers.particles = new ParticleSystem(this.sceneSetup.scene);
       this.visualizers.particles.setPosition(0, 0, 0);
       
+      // Initialize UI
+      console.log('Creating UI controls...');
       this.controlPanels = new ControlPanels(this.sceneSetup.scene);
       
+      // Setup events
       this.setupEventListeners();
       this.setupXREvents();
       
+      // Hide loading and start
       document.getElementById('loading').style.display = 'none';
+      console.log('Initialization complete!');
       
       this.isInitialized = true;
       this.animate();
       
     } catch (error) {
       console.error('Failed to initialize:', error);
+      console.error('Stack trace:', error.stack);
       document.getElementById('loading').textContent = 'Failed to initialize: ' + error.message;
     }
   }
